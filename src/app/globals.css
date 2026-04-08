@@ -7,8 +7,12 @@
   --glass-bg: rgba(255, 255, 255, 0.7);
   --glass-border: rgba(0, 0, 0, 0.15);
   --glass-shadow: 0 4px 30px rgba(0, 0, 0, 0.05);
-  --font-serif: "Shippori Mincho", "Noto Serif JP", serif;
-  --font-sans: "Inter", "Helvetica Neue", Arial, sans-serif;
+  /* 和文明朝体: Google Fonts → macOS → Windows → generic */
+  --font-serif: "Shippori Mincho", "Noto Serif JP", "Hiragino Mincho ProN",
+    "Yu Mincho", YuMincho, serif;
+  /* 欧文サンセリフ + 和文ゴシック フォールバック */
+  --font-sans: "Inter", "Helvetica Neue", "Hiragino Sans",
+    "Hiragino Kaku Gothic ProN", Arial, "Noto Sans JP", Meiryo, sans-serif;
 }
 
 * {
@@ -25,6 +29,14 @@ body {
   color: var(--text-main);
   font-family: var(--font-sans);
   line-height: 1.6;
+  scroll-behavior: smooth;
+  /* 日本語タイポグラフィ: フォントスムージング */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* 禁則処理: 句読点の行頭・行末を正しく制御 */
+  line-break: strict;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
 }
 
 a {
@@ -38,14 +50,19 @@ input, button {
 }
 
 ::-webkit-scrollbar {
-  width: 4px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(0,0,0,0.15);
+  background-color: rgba(0,0,0,0.1);
   border-radius: 10px;
+  transition: all 0.3s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0,0,0,0.3);
 }
 
 @keyframes fadeIn {
@@ -64,6 +81,9 @@ input, button {
   color: var(--text-main);
   border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   padding-bottom: 0.3rem;
+  /* noteの実測に基づく: 見出しのみにpalt+字間調整を適用 */
+  font-feature-settings: "palt" 1;
+  letter-spacing: 0.04em;
 }
 .markdown-body p {
   margin-bottom: 1rem;
@@ -83,4 +103,13 @@ input, button {
   border: 0;
   border-top: 1px solid var(--glass-border);
   margin: 1.5rem 0;
+}
+
+/* 記述中...のパルスアニメーション */
+@keyframes writing-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+.writing-indicator {
+  animation: writing-pulse 2s ease-in-out infinite;
 }
