@@ -554,10 +554,10 @@ export default function ChatNoir() {
   const startPhase2 = async () => {
     setIsLoading(true);
 
-    // フェーズ2開始のシステム通知を履歴に追加
+    // メインゲーム開始のシステム通知を履歴に追加
     const phase2History = [
       ...messages,
-      { role: 'user', parts: [{ text: "（システム通知：フェーズ2を開始してください。上記のプロローグは事前に用意されたテキストであり、GMルールの書式に従っていない場合があります。ここから先のあなたの出力では、GMルールに厳密に従ってください。NPCの発言には必ず **名前**「セリフ」 の形式を使用すること。プロローグの状況を引き継ぎ、最初のシーンの描写を一人称視点で行い、プレイヤーの行動を待つ形で終了してください）" }] },
+      { role: 'user', parts: [{ text: "（システム通知：メインゲーム（本編）を開始してください。上記のプロローグは事前に用意されたテキストであり、GMルールの書式に従っていない場合があります。ここから先のあなたの出力では、GMルールに厳密に従ってください。NPCの発言には必ず **名前**「セリフ」 の形式を使用すること。プロローグの状況を引き継ぎ、最初のシーンの描写を一人称視点で行い、プレイヤーの行動を待つ形で終了してください）" }] },
     ];
 
     setMessages(phase2History);
@@ -628,6 +628,9 @@ export default function ChatNoir() {
     } else if (commandType === 'monologue') {
       triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。これまでの展開を踏まえ、現在の主人公の心境や整理すべき思考を小説の地の文のような独白（モノローグ）の形式で出力せよ。ただし、絶対にメタ的なネタバレを含まず、現時点での主人公の主観的な視点のみで記述すること。\n```json\n{\n  \"monologue\": \"主人公の内心の独白...\"\n}\n```）";
     }
+
+    // GMルールから削った「システムコマンドはルールを無視してJSONのみ返せ」という厳格な指示を、この瞬間の最後尾だけに動的に結合させる
+    triggerText += "\n\n※重要：これはシステムコマンドです。他のルール(情景描写、一人称、ステータス表示など)をすべて無視し、要求されたJSON形式のデータのみを純粋に出力してください。余計な挨拶や地の文は一切不要です。（アプリの手帳更新に必須なルールです）";
 
     // チャット履歴を維持したまま、最後に一時的なコマンドを足して通信する
     const activeMessages = overrideMessages || messages;
@@ -1147,6 +1150,46 @@ export default function ChatNoir() {
     );
   }
 
+  // --- ゲーム画面の描画最適化（入力毎の再レンダリング防止） ---
+  const renderedMessages = React.useMemo(() => {
+    return messages.map((msg, index) => {
+      // システム起動メッセージ(0)とメインゲーム開始指示(2)は非表示
+      if (index === 0 || index === 2) return null;
+
+      return (
+        <div
+          key={index}
+          className={`fade-in ${styles.messageRow}`}
+        >
+          {msg.role === 'user' && <span style={{ color: 'var(--text-muted)' }}>＞ </span>}
+          <div
+            className={styles.messageContent + " markdown-body"}
+            style={{
+              color: msg.role === 'user' ? 'var(--text-muted)' : 'var(--text-main)',
+              fontStyle: 'normal',
+              whiteSpace: 'pre-wrap'
+            }}
+          >
+            <ReactMarkdown
+              components={{
+                p: ({ children }) => {
+                  // 文字列「【終】」のみの段落を特定
+                  const isEnd = Array.isArray(children)
+                    ? (children.length === 1 && children[0] === '【終】')
+                    : children === '【終】';
+
+                  return <p className={isEnd ? 'end-mark' : ''}>{children}</p>;
+                }
+              }}
+            >
+              {formatNovelText(msg.parts[0].text, isVertical)}
+            </ReactMarkdown>
+          </div>
+        </div>
+      );
+    });
+  }, [messages, isVertical]);
+
   // --- ゲーム画面（プレイング 兼 ブリーフィング） ---
   return (
     <div className={styles.gameLayout}>
@@ -1220,42 +1263,7 @@ export default function ChatNoir() {
           )}
 
           {/* プレイ中のチャット表示 */}
-          {gameState === 'PLAYING' && messages.map((msg, index) => {
-            // システム起動メッセージ(0)とフェーズ2開始指示(2)は非表示
-            if (index === 0 || index === 2) return null;
-
-            return (
-              <div
-                key={index}
-                className={`fade-in ${styles.messageRow}`}
-              >
-                {msg.role === 'user' && <span style={{ color: 'var(--text-muted)' }}>＞ </span>}
-                <div
-                  className={styles.messageContent + " markdown-body"}
-                  style={{
-                    color: msg.role === 'user' ? 'var(--text-muted)' : 'var(--text-main)',
-                    fontStyle: 'normal',
-                    whiteSpace: 'pre-wrap'
-                  }}
-                >
-                  <ReactMarkdown
-                    components={{
-                      p: ({ children }) => {
-                        // 文字列「【終】」のみの段落を特定
-                        const isEnd = Array.isArray(children)
-                          ? (children.length === 1 && children[0] === '【終】')
-                          : children === '【終】';
-
-                        return <p className={isEnd ? 'end-mark' : ''}>{children}</p>;
-                      }
-                    }}
-                  >
-                    {formatNovelText(msg.parts[0].text, isVertical)}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            );
-          })}
+          {gameState === 'PLAYING' && renderedMessages}
 
           {/* プロローグ表示後の「物語に入る」ボタン（フェーズ2がまだ開始されていない時のみ） */}
           {gameState === 'PLAYING' && messages.length <= 2 && !isLoading && (
