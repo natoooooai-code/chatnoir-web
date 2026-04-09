@@ -343,3 +343,30 @@
   animation: fadeIn 0.3s ease forwards;
   box-shadow: 0 5px 15px rgba(0,0,0,0.2);
 }
+
+.scrollBottomBtn {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  width: 50px;
+  height: 50px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 90;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+}
+
+.scrollBottomBtn:hover {
+  background: var(--text-main);
+  color: var(--bg-color);
+  transform: scale(1.1);
+}

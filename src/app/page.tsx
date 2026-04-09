@@ -135,8 +135,6 @@ const formatNovelText = (text: string, isVertical: boolean) => {
       const code = ch.charCodeAt(0);
       return String.fromCharCode(code + 0xFEE0);
     });
-    // ダッシュ類の変換
-    formatted = formatted.replace(/--/g, '──').replace(/-/g, 'ー');
   }
   return formatted;
 };
@@ -333,18 +331,18 @@ export default function ChatNoir() {
     if (isLoaded && gameState !== 'WELCOME' && gameState !== 'SAVES' && gameState !== 'LOGIN') {
       const currentData = {
         gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, sessionRunId, saveName
+        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle
       };
 
       const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
-      // sessionRunIdが空（新規開始前）ならキーを作らない
-      if (!sessionRunId) return;
+      // sessionRunIdが空（新規開始前）、またはタイトルが設定されていない場合はセーブしない
+      if (!sessionRunId || !fileNameTitle) return;
 
       const runKey = `auto_save_${fileNameTitle}_${sessionRunId}`;
       sessionStorage.setItem('chatnoir-current-save-key', runKey);
       saveToIDB(runKey, currentData);
     }
-  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, sessionRunId, saveName]);
+  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle]);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -354,6 +352,16 @@ export default function ChatNoir() {
       } else {
         // 通常（横書き）モード
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    }
+  };
+
+  const scrollToTop = () => {
+    if (scrollRef.current) {
+      if (isVertical) {
+        scrollRef.current.scrollLeft = 0;
+      } else {
+        scrollRef.current.scrollTop = 0;
       }
     }
   };
@@ -466,6 +474,8 @@ export default function ChatNoir() {
       };
       reader.readAsText(file);
     });
+    // 入力値をリセットして、同じファイル名の再選択を可能にする
+    e.target.value = '';
   };
 
   // サンプルシナリオをサーバーから自動ロード
@@ -488,8 +498,8 @@ export default function ChatNoir() {
   };
 
   const handleStartLogin = () => {
-    if (apiKey.trim() === '' || !gmRuleText || !scenarioText || !prologueText) {
-      alert("必須項目（APIキー、GMルール、設定ファイル、プロローグ）をすべてセットしてください！");
+    if (apiKey.trim() === '' || !gmRuleText || !scenarioText || !prologueText || !briefingText) {
+      alert("必須項目（APIキー、GMルール、設定ファイル、プロローグ、概要ファイル）をすべてセットしてください！");
       return;
     }
     if (!saveName.trim()) {
@@ -509,6 +519,13 @@ export default function ChatNoir() {
 
     // いきなりゲームを開始せず、まずはブリーフィング画面へ進む
     setGameState('BRIEFING');
+    
+    // 画面遷移時に一番上（先頭）が表示されるようにスクロール位置をリセット
+    window.scrollTo(0, 0);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+      scrollRef.current.scrollLeft = 0;
+    }
   };
 
   // ブリーフィング画面で「物語を始める」を押した時の処理（プロローグだけ表示）
@@ -752,7 +769,10 @@ export default function ChatNoir() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${fileNameTitle}_${new Date().toISOString().slice(0, 10)}.json`;
+      const now = new Date();
+      const datePart = now.getFullYear().toString() + (now.getMonth() + 1).toString().padStart(2, '0') + now.getDate().toString().padStart(2, '0');
+      const timePart = now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0');
+      a.download = `${fileNameTitle}_${datePart}_${timePart}.json`;
       a.click();
       URL.revokeObjectURL(url);
       showToast('セーブデータをダウンロード保存しました');
@@ -893,7 +913,7 @@ export default function ChatNoir() {
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '1rem' }}>
             <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold', letterSpacing: '4px', display: 'flex', alignItems: 'center', gap: '12px', color: '#e0e0e0' }}>
-              <IconSidebar /> 管理コンソール - シナリオ一覧
+              シナリオ一覧
             </h2>
             <button onClick={() => setGameState('WELCOME')} style={{ background: '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', transition: 'all 0.2s' }}>
               トップ画面へ戻る
@@ -987,14 +1007,29 @@ export default function ChatNoir() {
       <div className={styles.container}>
         <style dangerouslySetInnerHTML={{ __html: dynamicStyles }} />
         <div className={`${styles.loginCard} fade-in`}>
-          {coverImage ? (
-            <div style={{ width: '100%', marginBottom: '1.5rem', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}>
-              <img src={coverImage} alt="Cover" style={{ width: '100%', height: 'auto', maxHeight: '400px', objectFit: 'cover', display: 'block' }} />
-            </div>
-          ) : (
-            <img src="/logo.png" alt="Chat;Noir" className={styles.logoImage} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1.5rem' }}>
+            <button
+              onClick={() => setGameState('WELCOME')}
+              style={{ background: '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', transition: 'all 0.2s' }}
+            >
+              トップ画面へ戻る
+            </button>
+          </div>
+          <div style={{ width: '100%', marginBottom: '1.5rem', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {coverImage ? (
+              <img src={coverImage} alt="Cover" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'cover', display: 'block' }} />
+            ) : (
+              <img src="/logo.png" alt="Chat;Noir" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'contain', display: 'block', padding: '2rem' }} />
+            )}
+          </div>
+          {scenarioTitle && scenarioText && (
+            <h1 style={{ fontSize: '1.8rem', color: 'var(--text-main)', margin: '1rem 0 0.5rem 0', fontFamily: 'var(--font-serif)', letterSpacing: '4px', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.8rem' }}>
+              {scenarioTitle}
+            </h1>
           )}
-          <p className={styles.subtitle}>シナリオファイルをアップロードして遊ぶ</p>
+          <p className={styles.subtitle}>
+            {scenarioText ? 'シナリオの準備ができました' : 'シナリオファイルをアップロードして遊ぶ'}
+          </p>
           <div className={styles.inputWrapper}>
             <input
               type="password"
@@ -1035,51 +1070,74 @@ export default function ChatNoir() {
               <IconBook /> サンプルシナリオで遊ぶ
             </button>
 
-            <div style={{ textAlign: 'center', background: 'transparent', padding: '1rem', borderBottom: '1px dotted rgba(0,0,0,0.2)', marginTop: '1rem' }}>
-              <p style={{ fontSize: '0.85rem', color: '#111', marginBottom: '0.8rem', fontFamily: 'var(--font-serif)', fontWeight: 'bold', letterSpacing: '1px' }}>
-                関連ファイルの一括読み込み
+            <div style={{ textAlign: 'center', background: 'rgba(0,0,0,0.03)', padding: '1.5rem', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.1)', marginTop: '1rem', marginBottom: '2rem' }}>
+              <p style={{ fontSize: '0.85rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', fontWeight: 'bold', letterSpacing: '1px' }}>
+                ファイルを一括選択
               </p>
-              <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.8rem' }}>
-                設定ファイルやプロローグなどに加え、<br />パッケージ画像（<code>_cover.png</code> 等）もまとめてドロップ可能です。
+              <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                設定ファイル・概要・プロローグ・ルール・画像を<br />まとめて選択して一気に準備できます。
               </p>
-              <input type="file" multiple accept=".md,.txt,image/*" onChange={handleMultiFileRead} style={{ color: 'var(--text-muted)', fontSize: '0.8rem', width: '100%', cursor: 'pointer', padding: '0.5rem', background: 'rgba(0,0,0,0.05)', borderRadius: '4px' }} />
+              <input type="file" multiple accept=".md,.txt,image/*" onChange={handleMultiFileRead} style={{ color: '#111', fontSize: '0.8rem', width: '100%', cursor: 'pointer', padding: '0.8rem', background: '#fff', border: '1px solid #ddd', borderRadius: '4px' }} />
+            </div>
+
+            <div style={{ position: 'relative', textAlign: 'center', margin: '2rem 0' }}>
+              <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: '1px', background: 'var(--border-color)', zIndex: 1 }}></div>
+              <span style={{ position: 'relative', zIndex: 2, background: 'var(--sidebar-bg)', padding: '0 1rem', fontSize: '0.7rem', color: 'var(--text-muted)', letterSpacing: '1px' }}>
+                または、個別に細かく設定
+              </span>
             </div>
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
               <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
-                <IconFile /> GMルール (必須)
+                <IconImage /> パッケージ画像
+                {coverImage && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
+              </p>
+              <input type="file" accept="image/*" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = (evt) => setCoverImage(evt.target?.result as string);
+                  reader.readAsDataURL(file);
+                }
+                e.target.value = '';
+              }} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+            </div>
+
+            <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
+              <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
+                <IconFile /> GMルール
                 {gmRuleText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              {!gmRuleText && <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setGmRuleText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />}
+              <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setGmRuleText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
               <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
-                <IconFile /> 設定ファイル (必須)
+                <IconFile /> 設定ファイル
                 {scenarioText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              {!scenarioText && <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setScenarioText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />}
-            </div>
-
-            <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
-                <IconFile /> 概要ファイル (任意)
-                {briefingText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
-              </p>
-              {!briefingText && <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setBriefingText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />}
+              <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setScenarioText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
               <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
-                <IconFile /> プロローグ (必須)
+                <IconFile /> 概要ファイル
+                {briefingText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
+              </p>
+              <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setBriefingText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+            </div>
+
+            <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
+              <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
+                <IconFile /> プロローグ
                 {prologueText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              {!prologueText && <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setPrologueText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />}
+              <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setPrologueText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
             </div>
 
             <button
               className={styles.btn}
               onClick={handleStartLogin}
-              style={{ opacity: (!apiKey || !gmRuleText || !scenarioText || !prologueText) ? 0.5 : 1 }}
+              style={{ opacity: (!apiKey || !gmRuleText || !scenarioText || !prologueText || !briefingText) ? 0.5 : 1 }}
             >
               物語の準備へ
             </button>
@@ -1180,7 +1238,20 @@ export default function ChatNoir() {
                     whiteSpace: 'pre-wrap'
                   }}
                 >
-                  <ReactMarkdown>{formatNovelText(msg.parts[0].text, isVertical)}</ReactMarkdown>
+                  <ReactMarkdown
+                    components={{
+                      p: ({ children }) => {
+                        // 文字列「【終】」のみの段落を特定
+                        const isEnd = Array.isArray(children)
+                          ? (children.length === 1 && children[0] === '【終】')
+                          : children === '【終】';
+
+                        return <p className={isEnd ? 'end-mark' : ''}>{children}</p>;
+                      }
+                    }}
+                  >
+                    {formatNovelText(msg.parts[0].text, isVertical)}
+                  </ReactMarkdown>
                 </div>
               </div>
             );
@@ -1330,14 +1401,47 @@ export default function ChatNoir() {
               }}
               disabled={isLoading || gameState === 'BRIEFING'}
             />
-            <button
-              className={styles.sendBtn}
-              onClick={sendMessage}
-              disabled={isLoading || gameState === 'BRIEFING'}
-              style={{ height: '40px', padding: '0 2rem' }}
-            >
-              送信
-            </button>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end' }}>
+              <div style={{ position: 'absolute', top: '-45px', right: '0', width: '100%', display: 'flex', gap: '5px', zIndex: 10 }}>
+                {/* 最新へ（左側） */}
+                <button
+                  onClick={scrollToBottom}
+                  style={{
+                    flex: 1, height: '36px', background: 'var(--sidebar-bg)', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-muted)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 10px rgba(0,0,0,0.1)', transition: 'color 0.2s'
+                  }}
+                  title="最新の文へ"
+                >
+                  <span style={{ transform: isVertical ? 'rotate(90deg)' : 'none', display: 'flex', alignItems: 'center' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 5v14M19 12l-7 7-7-7"/>
+                    </svg>
+                  </span>
+                </button>
+
+                {/* 先頭へ（右側） */}
+                <button
+                  onClick={scrollToTop}
+                  style={{
+                    flex: 1, height: '36px', background: 'var(--sidebar-bg)', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-muted)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 10px rgba(0,0,0,0.1)', transition: 'color 0.2s'
+                  }}
+                  title="先頭へ"
+                >
+                  <span style={{ transform: isVertical ? 'rotate(90deg)' : 'none', display: 'flex', alignItems: 'center' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 19V5M5 12l7-7 7 7"/>
+                    </svg>
+                  </span>
+                </button>
+              </div>
+              <button
+                className={styles.sendBtn}
+                onClick={sendMessage}
+                disabled={isLoading || gameState === 'BRIEFING'}
+                style={{ height: '40px', padding: '0 2rem' }}
+              >
+                送信
+              </button>
+            </div>
           </div>
         </div>
       </main>

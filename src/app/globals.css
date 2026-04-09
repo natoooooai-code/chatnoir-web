@@ -113,3 +113,11 @@ input, button {
 .writing-indicator {
   animation: writing-pulse 2s ease-in-out infinite;
 }
+
+/* 終マーク用 */
+.end-mark {
+  display: block !important;
+  text-align: right !important; /* 縦書きでは下揃え、横書きでは右寄せ */
+  margin-top: 2rem !important;
+  margin-bottom: 2rem !important;
+}
