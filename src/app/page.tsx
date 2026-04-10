@@ -168,7 +168,7 @@ export default function ChatNoir() {
   // サイドバーの開閉状態
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  const [charactersData, setCharactersData] = useState<{ name: string, gender?: string, info: string, image: string | null, isGenerating: boolean, lastPrompt?: string }[]>([]);
+  const [charactersData, setCharactersData] = useState<{ true_name?: string, name: string, gender?: string, info: string, image: string | null, isGenerating: boolean, lastPrompt?: string }[]>([]);
   const [factsData, setFactsData] = useState<string[]>([]);
   const [mysteriesData, setMysteriesData] = useState<string[]>([]);
   const [monologueData, setMonologueData] = useState<string[]>([]);
@@ -633,7 +633,7 @@ export default function ChatNoir() {
     // UI（小説空間）には出さず、APIの裏側で送るメッセージ
     let triggerText = '';
     if (commandType === 'characters') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。このシナリオの主人公（プレイヤー自身）と、ここまでに登場した人物の基本情報を、必ず以下のJSON形式のみで出力せよ。ただし、現時点で主人公が知り得ない裏情報や設定やネタバレは絶対に含めないこと。その時点で主人公が名前を知らない人物は、名前を明かさず、代わりに外見的特徴で記述すること。（例：黒服の男）\n```json\n{\n  \"characters\": [\n    { \"name\": \"名前\", \"gender\": \"male または female または unknown\", \"info\": \"年齢・職業などの基本設定と現在の印象\" }\n  ]\n}\n```）";
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。このシナリオの主人公（プレイヤー自身）と、ここまでに登場した人物の基本情報を、以下のJSON形式のみで出力せよ。現時点で主人公が知り得ない裏情報やネタバレは厳禁。\n```json\n{\n  \"characters\": [\n    { \"true_name\": \"本当の名前(一貫したIDとして使用)\", \"is_name_known_to_player\": trueかfalse(劇中で名前が判明しているか), \"name\": \"trueなら本名を、falseなら『黒服の男』などの外見的特徴を出力\", \"gender\": \"male または female または unknown\", \"info\": \"現在主人公が知っている範囲での印象や基本設定\" }\n  ]\n}\n```）";
     } else if (commandType === 'facts') {
       triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公が把握している確定的な事実（判明した事実）を、網羅的に以下のJSON形式のみで出力せよ。ただし、絶対にネタバレをせず、現時点で主人公が直接体験・確認した情報のみに限定すること。\n```json\n{\n  \"facts\": [\"事実1\", \"事実2\"]\n}\n```）";
     } else if (commandType === 'mysteries') {
@@ -675,7 +675,10 @@ export default function ChatNoir() {
             setCharactersData(prev => {
               const updated = [...prev];
               parsed.characters.forEach((c: any) => {
-                const idx = updated.findIndex(old => old.name === c.name);
+                // true_nameが一致するか、またはnameが一致するかで同一人物を判定
+                const idx = updated.findIndex(old => 
+                  (old.true_name && c.true_name && old.true_name === c.true_name) || old.name === c.name
+                );
                 if (idx !== -1) {
                   // すでに存在する人物は情報をマージ（画像等は維持）
                   updated[idx] = { ...updated[idx], ...c, isGenerating: false };
