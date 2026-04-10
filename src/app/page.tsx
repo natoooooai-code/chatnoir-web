@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import styles from './page.module.css';
 
@@ -144,6 +144,9 @@ export default function ChatNoir() {
 
   // ゲームの進行ステータス
   const [gameState, setGameState] = useState<'WELCOME' | 'SAVES' | 'LOGIN' | 'BRIEFING' | 'PLAYING'>('WELCOME');
+  const [endingPhase, setEndingPhase] = useState<'NONE' | 'READY_TO_END' | 'FADE_OUT' | 'MENU' | 'REVIEW'>('NONE');
+  const [reviewMessages, setReviewMessages] = useState<any[]>([]);
+  const [reviewInputText, setReviewInputText] = useState('');
 
   // ファイルから読み込んだテキストデータを保持するState
   const [gmRuleText, setGmRuleText] = useState('');
@@ -186,6 +189,8 @@ export default function ChatNoir() {
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(380);
   const dragRef = useRef<boolean>(false);
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(450);
+  const leftDragRef = useRef<boolean>(false);
 
   // 設定ファイルからタイトルを自動抽出
   useEffect(() => {
@@ -244,6 +249,9 @@ export default function ChatNoir() {
     setSaveName('');
     setSessionRunId('');
     setPlayerMemo('');
+    setEndingPhase('NONE');
+    setReviewMessages([]);
+    setReviewInputText('');
     sessionStorage.removeItem('chatnoir-current-save-key');
   };
 
@@ -256,29 +264,30 @@ export default function ChatNoir() {
     // 明示的な指定があればそれを使用、なければ保存されたもの、それもなければPLAYING
     const nextState = targetGameState || parsed.gameState || 'PLAYING';
     setGameState(nextState as any);
-    if (parsed.messages) setMessages(parsed.messages);
-    if (parsed.gmRuleText) setGmRuleText(parsed.gmRuleText);
-    if (parsed.scenarioText) setScenarioText(parsed.scenarioText);
-    if (parsed.briefingText) setBriefingText(parsed.briefingText);
-    if (parsed.prologueText) setPrologueText(parsed.prologueText);
-    if (parsed.coverImage) setCoverImage(parsed.coverImage);
-    if (parsed.apiKey) setApiKey(parsed.apiKey);
-    if (parsed.charactersData) setCharactersData(parsed.charactersData);
-    if (parsed.factsData) setFactsData(parsed.factsData);
-    if (parsed.mysteriesData) setMysteriesData(parsed.mysteriesData);
-    if (parsed.monologueData) {
-      setMonologueData(Array.isArray(parsed.monologueData) ? parsed.monologueData : (parsed.monologueData ? [parsed.monologueData] : []));
-    }
+    setMessages(parsed.messages || []);
+    setGmRuleText(parsed.gmRuleText || '');
+    setScenarioText(parsed.scenarioText || '');
+    setBriefingText(parsed.briefingText || '');
+    setPrologueText(parsed.prologueText || '');
+    setCoverImage(parsed.coverImage || '');
+    if (parsed.apiKey) setApiKey(parsed.apiKey); // APIキーは未保存でも消さない
+    setCharactersData(parsed.charactersData || []);
+    setFactsData(parsed.factsData || []);
+    setMysteriesData(parsed.mysteriesData || []);
+    setMonologueData(parsed.monologueData ? (Array.isArray(parsed.monologueData) ? parsed.monologueData : [parsed.monologueData]) : []);
     if (parsed.theme) setTheme(parsed.theme);
-    if (parsed.scenarioTitle) setScenarioTitle(parsed.scenarioTitle);
+    setScenarioTitle(parsed.scenarioTitle || 'New Scenario');
     if (parsed.fontFamily) setFontFamily(parsed.fontFamily);
     if (parsed.fontSize) setFontSize(parsed.fontSize);
     if (parsed.isVertical !== undefined) setIsVertical(parsed.isVertical);
     if (parsed.sidebarWidth) setSidebarWidth(parsed.sidebarWidth);
-    if (parsed.isSidebarOpen !== undefined) setIsSidebarOpen(parsed.isSidebarOpen);
-    if (parsed.sessionRunId) setSessionRunId(parsed.sessionRunId);
-    if (parsed.saveName) setSaveName(parsed.saveName);
-    if (parsed.playerMemo !== undefined) setPlayerMemo(parsed.playerMemo);
+    if (parsed.leftSidebarWidth) setLeftSidebarWidth(parsed.leftSidebarWidth);
+    setIsSidebarOpen(parsed.isSidebarOpen !== undefined ? parsed.isSidebarOpen : true);
+    setSessionRunId(parsed.sessionRunId || '');
+    setSaveName(parsed.saveName || '');
+    setPlayerMemo(parsed.playerMemo || '');
+    setEndingPhase(parsed.endingPhase || 'NONE');
+    setReviewMessages(parsed.reviewMessages || []);
 
     // 復元後、DOMのレンダリングを待ってから最新メッセージへスクロール
     setTimeout(() => scrollToBottom(), 150);
@@ -331,7 +340,7 @@ export default function ChatNoir() {
     if (isLoaded && gameState !== 'WELCOME' && gameState !== 'SAVES' && gameState !== 'LOGIN') {
       const currentData = {
         gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle
+        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, endingPhase, reviewMessages
       };
 
       const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
@@ -342,7 +351,7 @@ export default function ChatNoir() {
       sessionStorage.setItem('chatnoir-current-save-key', runKey);
       saveToIDB(runKey, currentData);
     }
-  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle]);
+  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, endingPhase, reviewMessages]);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -369,15 +378,19 @@ export default function ChatNoir() {
   // サイドバーのリサイズ処理
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (!dragRef.current) return;
-      const newWidth = window.innerWidth - e.clientX;
-      if (newWidth > 250 && newWidth < 800) {
-        setSidebarWidth(newWidth);
+      if (dragRef.current) {
+        const newWidth = window.innerWidth - e.clientX;
+        if (newWidth > 250 && newWidth < 800) setSidebarWidth(newWidth);
+      }
+      if (leftDragRef.current) {
+        const newWidth = e.clientX;
+        if (newWidth > 250 && newWidth < 800) setLeftSidebarWidth(newWidth);
       }
     };
     const handleMouseUp = () => {
-      if (dragRef.current) {
+      if (dragRef.current || leftDragRef.current) {
         dragRef.current = false;
+        leftDragRef.current = false;
         document.body.style.cursor = 'default';
         document.body.style.userSelect = 'auto'; // Re-enable text selection after drag
       }
@@ -760,11 +773,37 @@ export default function ChatNoir() {
   };
 
   // --- セーブ・ロード機能 ---
+  const handleDownloadPlayLog = () => {
+    let logText = `# ${scenarioTitle} - プレイログ\n\n`;
+    messages.forEach((msg, index) => {
+      // システム起動メッセージとメインゲーム開始指示は除外
+      if (index === 0 || index === 2) return;
+      if (!msg.parts?.[0]?.text) return;
+      
+      logText += `${msg.parts[0].text}\n\n---\n\n`;
+    });
+    
+    const blob = new Blob([logText], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    
+    const now = new Date();
+    const datePart = now.getFullYear().toString() + (now.getMonth() + 1).toString().padStart(2, '0') + now.getDate().toString().padStart(2, '0');
+    const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
+    
+    a.download = `プレイログ_${fileNameTitle}_${datePart}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('プレイログをテキスト出力しました');
+  };
   const handleSaveData = () => {
     try {
       const saveData = {
         gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, scenarioTitle
+        charactersData, factsData, mysteriesData, monologueData, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, scenarioTitle, endingPhase, reviewMessages
       };
 
       const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
@@ -858,6 +897,10 @@ export default function ChatNoir() {
       const data = await res.json();
       if (res.ok) {
         setMessages([...newHistory, { role: 'model', parts: [{ text: data.text }] }]);
+        // エンディング判定：AIのレスポンスに【終】が含まれていたらエンディング待機状態へ
+        if (data.text.includes('【終】') && endingPhase === 'NONE') {
+          setEndingPhase('READY_TO_END');
+        }
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
         const isOverloaded = errorStr.includes('503') || errorStr.includes('demand') || errorStr.includes('UNAVAILABLE');
@@ -879,12 +922,110 @@ export default function ChatNoir() {
     }
   };
 
+  const sendReviewMessage = async (initialPrompt?: string) => {
+    const prompt = initialPrompt || reviewInputText;
+    if (!prompt.trim() || isLoading) return;
+
+    // 初回のみ本編履歴をベースにする
+    const baseHistory = reviewMessages.length > 0 ? reviewMessages : messages;
+    const isInitial = !!initialPrompt;
+    const newHistory = [...baseHistory, { role: 'user', parts: [{ text: prompt }], isHidden: isInitial }];
+    setReviewMessages(newHistory);
+    setReviewInputText('');
+    setIsLoading(true);
+
+    abortControllerRef.current = new AbortController();
+
+    const REVIEW_SYSTEM_PROMPT = `
+【重要】ここからは本編クリア後の感想戦（ネタバレありのメタ会話）です。
+あなたは、この物語の全てを知るGM「ロア」として、プレイヤーの旅を振り返ります。以下の手順に従って解説と感想を行ってください。
+
+1. まず、設定ファイルに記述されていた**物語の全ての真相**と、**核心となる謎（セントラル・クエスチョン）に対する最終的な答え**を、分かりやすくプレイヤーに開示してください。
+2. 次に、プレイヤーがゲーム中に下した**重要な選択**をいくつかピックアップし、その選択が他の登場人物の感情や物語の分岐に**どのように影響したか**を具体的に解説してください。（例：「あの場面で彼に正直に話したことで、彼の信頼度が大幅に上昇し、通常では得られない情報を得ることができました」）
+3. プレイヤーが**見逃してしまった可能性のある重要な伏線や情報**について、その本来の意味と、どこで発見できた可能性があったかを解説してください。
+4. 各登場人物（特にプレイヤーが深く関わった人物）の、プレイヤーが知り得なかった**最終的な内面や秘密**について語り、彼らの物語を補完してください。
+5. 最後に、GM「ロア」個人の視点から、プレイヤーの旅路全体に対する感想や称賛の言葉を述べてください。
+6. 全ての解説と感想の締めくくりとして、必ず以下の言葉を出力してください：
+「もし、この物語について何か他に聞きたいことがあれば、何でも質問してください。」
+`;
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: abortControllerRef.current.signal,
+        body: JSON.stringify({
+          apiKey: apiKey,
+          model: selectedModel,
+          messages: newHistory,
+          isReviewMode: true,
+          systemInstruction: gmRuleText + "\n\n" + scenarioText + "\n\n" + REVIEW_SYSTEM_PROMPT
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setReviewMessages([...newHistory, { role: 'model', parts: [{ text: data.text }] }]);
+      } else {
+        const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+        alert("エラーが発生しました: " + errorStr);
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error(err);
+        alert("通信に失敗しました。");
+      }
+    } finally {
+      setIsLoading(false);
+      abortControllerRef.current = null;
+    }
+  };
+
   const handleCancel = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       showToast('AIの出力を停止しました');
     }
   };
+
+  // --- ゲーム画面の描画最適化（入力毎の再レンダリング防止） ---
+  const renderedMessages = useMemo(() => {
+    return messages.map((msg, index) => {
+      // システム起動メッセージ(0)とメインゲーム開始指示(2)は非表示
+      if (index === 0 || index === 2) return null;
+
+      return (
+        <div
+          key={index}
+          className={`fade-in ${styles.messageRow}`}
+        >
+          {msg.role === 'user' && <span style={{ color: 'var(--text-muted)' }}>＞ </span>}
+          <div
+            className={styles.messageContent + " markdown-body"}
+            style={{
+              color: msg.role === 'user' ? 'var(--text-muted)' : 'var(--text-main)',
+              fontStyle: 'normal',
+              whiteSpace: 'pre-wrap'
+            }}
+          >
+            <ReactMarkdown
+              components={{
+                p: ({ children }) => {
+                  // 文字列「【終】」のみの段落を特定
+                  const isEnd = Array.isArray(children)
+                    ? (children.length === 1 && children[0] === '【終】')
+                    : children === '【終】';
+
+                  return <p className={isEnd ? 'end-mark' : ''}>{children}</p>;
+                }
+              }}
+            >
+              {formatNovelText(msg.parts[0].text, isVertical)}
+            </ReactMarkdown>
+          </div>
+        </div>
+      );
+    });
+  }, [messages, isVertical]);
 
   if (gameState === 'WELCOME') {
     return (
@@ -1150,46 +1291,6 @@ export default function ChatNoir() {
     );
   }
 
-  // --- ゲーム画面の描画最適化（入力毎の再レンダリング防止） ---
-  const renderedMessages = React.useMemo(() => {
-    return messages.map((msg, index) => {
-      // システム起動メッセージ(0)とメインゲーム開始指示(2)は非表示
-      if (index === 0 || index === 2) return null;
-
-      return (
-        <div
-          key={index}
-          className={`fade-in ${styles.messageRow}`}
-        >
-          {msg.role === 'user' && <span style={{ color: 'var(--text-muted)' }}>＞ </span>}
-          <div
-            className={styles.messageContent + " markdown-body"}
-            style={{
-              color: msg.role === 'user' ? 'var(--text-muted)' : 'var(--text-main)',
-              fontStyle: 'normal',
-              whiteSpace: 'pre-wrap'
-            }}
-          >
-            <ReactMarkdown
-              components={{
-                p: ({ children }) => {
-                  // 文字列「【終】」のみの段落を特定
-                  const isEnd = Array.isArray(children)
-                    ? (children.length === 1 && children[0] === '【終】')
-                    : children === '【終】';
-
-                  return <p className={isEnd ? 'end-mark' : ''}>{children}</p>;
-                }
-              }}
-            >
-              {formatNovelText(msg.parts[0].text, isVertical)}
-            </ReactMarkdown>
-          </div>
-        </div>
-      );
-    });
-  }, [messages, isVertical]);
-
   // --- ゲーム画面（プレイング 兼 ブリーフィング） ---
   return (
     <div className={styles.gameLayout}>
@@ -1217,6 +1318,11 @@ export default function ChatNoir() {
             margin-bottom: 0 !important;
             margin-left: 3.5rem !important;
           }
+          .review-markdown ul, .review-markdown ol {
+            padding-left: 1.8rem;
+            margin-top: 0.8rem;
+            margin-bottom: 0.8rem;
+          }
         ` : ''}
       ` }} />
 
@@ -1225,6 +1331,53 @@ export default function ChatNoir() {
       {gameState === 'BRIEFING' && <div className={styles.briefingOverlay} />}
 
       {toastMsg && <div className={styles.toast}>{toastMsg}</div>}
+
+      {/* 感想戦（レビューUI 左サイドバー） */}
+      <aside style={{ position: 'relative', width: endingPhase === 'REVIEW' ? `${leftSidebarWidth}px` : '0px', transition: leftDragRef.current ? 'none' : 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)', overflow: 'hidden', background: 'var(--sidebar-bg)', borderRight: endingPhase === 'REVIEW' ? '1px solid var(--border-color)' : 'none', display: 'flex', flexDirection: 'column', zIndex: 10 }}>
+        <div
+          onMouseDown={(e) => { leftDragRef.current = true; document.body.style.cursor = 'ew-resize'; document.body.style.userSelect = 'none'; }}
+          style={{ position: 'absolute', top: 0, right: 0, width: '6px', height: '100%', cursor: 'ew-resize', zIndex: 100, background: 'transparent' }}
+        />
+        {endingPhase === 'REVIEW' && (
+          <div className="fade-in" style={{ width: `${leftSidebarWidth}px`, height: '100%', display: 'flex', flexDirection: 'column', padding: '1.5rem', flexShrink: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
+              <h2 style={{ letterSpacing: '2px', margin: 0, fontSize: '1.1rem', color: 'var(--text-main)' }}>感想戦</h2>
+              <button onClick={() => setEndingPhase('MENU')} style={{ background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '0.4rem 1rem', letterSpacing: '1px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', transition: 'all 0.2s' }}>MENUへ戻る</button>
+            </div>
+            
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1rem', paddingRight: '0.5rem' }}>
+              {reviewMessages.map((msg, idx) => {
+                // 本編履歴や非表示プロンプトは表示しない
+                if (idx < messages.length || msg.isHidden) return null;
+                return (
+                  <div key={idx} className="review-markdown" style={{ color: msg.role === 'user' ? 'var(--text-muted)' : 'var(--text-main)', whiteSpace: 'pre-wrap', background: msg.role === 'user' ? 'transparent' : 'var(--bg-color)', padding: '1rem', borderRadius: '8px', border: msg.role !== 'user' ? '1px solid var(--border-color)' : 'none', lineHeight: 1.8, fontSize: '0.9rem' }}>
+                    {msg.role === 'user' && '＞ '}
+                    <ReactMarkdown>{formatNovelText(msg.parts[0].text, false)}</ReactMarkdown>
+                  </div>
+                );
+              })}
+              {isLoading && <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', padding: '1rem', fontSize: '0.9rem' }}>🖋 GMが記述中……</p>}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+              <textarea
+                value={reviewInputText}
+                onChange={e => setReviewInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    sendReviewMessage();
+                  }
+                }}
+                placeholder="GMに質問する... (Ctrl+Enterで送信)"
+                style={{ width: '100%', background: 'var(--chat-input-bg)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '0.8rem', borderRadius: '4px', minHeight: '60px', fontFamily: 'inherit', resize: 'vertical', fontSize: '0.9rem' }}
+              />
+              <button onClick={() => sendReviewMessage()} disabled={isLoading || !reviewInputText.trim()} style={{ width: '100%', background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.8rem', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', letterSpacing: '2px', opacity: (isLoading || !reviewInputText.trim()) ? 0.5 : 1, fontSize: '0.9rem' }}>
+                送信
+              </button>
+            </div>
+          </div>
+        )}
+      </aside>
 
       <main className={styles.mainChat}>
         <div
@@ -1264,6 +1417,42 @@ export default function ChatNoir() {
 
           {/* プレイ中のチャット表示 */}
           {gameState === 'PLAYING' && renderedMessages}
+
+          {/* エンディング「幕を閉じる」ボタン */}
+          {gameState === 'PLAYING' && endingPhase === 'READY_TO_END' && (
+            <div className="fade-in" style={{
+              textAlign: isVertical ? 'left' : 'center',
+              marginTop: isVertical ? '0' : '4rem',
+              marginLeft: isVertical ? '4rem' : '0',
+              marginBottom: '6rem',
+              display: 'flex',
+              flexDirection: isVertical ? 'column' : 'column',
+              alignItems: isVertical ? 'center' : 'center',
+            }}>
+              <button
+                className={styles.btn}
+                onClick={() => {
+                  setIsSidebarOpen(false);
+                  setEndingPhase('FADE_OUT');
+                  setTimeout(() => setEndingPhase('MENU'), 3000);
+                }}
+                style={{
+                  padding: isVertical ? '3rem 1.5rem' : '1.5rem 5rem',
+                  fontSize: '1.2rem',
+                  background: 'var(--text-main)',
+                  color: 'var(--bg-color)',
+                  border: 'none',
+                  letterSpacing: '8px',
+                  boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+                  transition: 'transform 0.3s ease'
+                }}
+                onMouseOver={(e: any) => e.target.style.transform = 'translateY(-2px)'}
+                onMouseOut={(e: any) => e.target.style.transform = 'translateY(0)'}
+              >
+                幕を閉じる
+              </button>
+            </div>
+          )}
 
           {/* プロローグ表示後の「物語に入る」ボタン（フェーズ2がまだ開始されていない時のみ） */}
           {gameState === 'PLAYING' && messages.length <= 2 && !isLoading && (
@@ -1307,10 +1496,73 @@ export default function ChatNoir() {
           </button>
         )}
 
+        {/* エンディング演出オーバーレイ */}
+        {(endingPhase === 'FADE_OUT' || endingPhase === 'MENU') && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+            background: '#000', zIndex: 1000,
+            display: 'flex', flexDirection: 'column',
+            justifyContent: 'center', alignItems: 'center',
+            opacity: endingPhase === 'FADE_OUT' ? 0 : 1,
+            animation: endingPhase === 'FADE_OUT' ? 'fadeInSlow 3s ease-in-out forwards' : 'none',
+            color: '#fff', fontFamily: 'var(--font-serif)',
+          }}>
+            {endingPhase === 'FADE_OUT' && (
+              <div style={{ animation: 'fadeInSlow 2.5s ease-in-out forwards', padding: '2rem', height: '100%', display: 'flex', alignItems: 'center' }}>
+                <p style={{ letterSpacing: '4px', fontSize: '1.2rem', textAlign: 'center', lineHeight: 2 }}>
+                  ― あなたの物語はここで幕を閉じます ―
+                </p>
+              </div>
+            )}
+            {endingPhase === 'MENU' && (
+              <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', alignItems: 'center', maxWidth: '600px', width: '100%', padding: '2rem' }}>
+                <h2 style={{ letterSpacing: '8px', fontSize: '2rem', marginBottom: '1rem', color: '#fff', fontWeight: 'bold' }}>THE END</h2>
+                <p style={{ color: '#aaa', letterSpacing: '2px', marginBottom: '2rem', textAlign: 'center', fontSize: '1rem' }}>
+                  素晴らしい物語でした。<br />ここから先はどうしますか？
+                </p>
+                
+                <button onClick={() => {
+                  setEndingPhase('REVIEW');
+                  sendReviewMessage("シナリオクリアお疲れ様でした！それでは、感想戦をよろしくお願いします！");
+                }} style={{ background: 'var(--accent-glow)', border: '1px solid var(--accent-red)', padding: '1.5rem 3rem', color: '#fff', fontSize: '1.1rem', letterSpacing: '2px', borderRadius: '8px', width: '100%', cursor: 'pointer', backdropFilter: 'blur(10px)', transition: '0.3s' }}
+                onMouseOver={(e: any) => e.target.style.background = 'var(--accent-red)'}
+                onMouseOut={(e: any) => e.target.style.background = 'var(--accent-glow)'}>
+                  感想戦をはじめる（ネタバレあり解説）
+                </button>
 
+                <button onClick={() => {
+                  setEndingPhase('NONE');
+                  showToast('エピローグの続きを再開しました');
+                }} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', padding: '1rem 3rem', color: '#aaa', fontSize: '1rem', letterSpacing: '2px', borderRadius: '8px', width: '100%', cursor: 'pointer', transition: '0.3s' }}
+                onMouseOver={(e: any) => { e.target.style.background = 'rgba(255,255,255,0.1)'; e.target.style.color = '#fff'; }}
+                onMouseOut={(e: any) => { e.target.style.background = 'transparent'; e.target.style.color = '#aaa'; }}>
+                  エピローグの続きを遊ぶ（フリーモード）
+                </button>
 
-        {/* 入力欄（ブリーフィング中は非表示） */}
-        <div className={styles.inputArea} style={{ display: gameState === 'BRIEFING' ? 'none' : 'flex', flexDirection: 'column', gap: '8px', zIndex: 100 }}>
+                <button onClick={handleDownloadPlayLog} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', padding: '1rem 3rem', color: '#aaa', fontSize: '1rem', letterSpacing: '2px', borderRadius: '8px', width: '100%', cursor: 'pointer', transition: '0.3s' }}
+                onMouseOver={(e: any) => { e.target.style.background = 'rgba(255,255,255,0.1)'; e.target.style.color = '#fff'; }}
+                onMouseOut={(e: any) => { e.target.style.background = 'transparent'; e.target.style.color = '#aaa'; }}>
+                  物語をテキスト形式で出力する（プレイログ）
+                </button>
+
+                <button onClick={handleSaveData} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', padding: '1rem 3rem', color: '#aaa', fontSize: '1rem', letterSpacing: '2px', borderRadius: '8px', width: '100%', cursor: 'pointer', transition: '0.3s' }}
+                onMouseOver={(e: any) => { e.target.style.background = 'rgba(255,255,255,0.1)'; e.target.style.color = '#fff'; }}
+                onMouseOut={(e: any) => { e.target.style.background = 'transparent'; e.target.style.color = '#aaa'; }}>
+                  システム状態をまるごとセーブデータとして保存
+                </button>
+
+                <button onClick={() => { resetAllState(); setGameState('WELCOME'); }} style={{ background: 'transparent', border: 'none', padding: '1rem', color: '#666', fontSize: '0.9rem', letterSpacing: '2px', marginTop: '1rem', cursor: 'pointer', textDecoration: 'underline' }}
+                onMouseOver={(e: any) => e.target.style.color = '#aaa'}
+                onMouseOut={(e: any) => e.target.style.color = '#666'}>
+                  トップ画面へ戻る
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 入力欄（ブリーフィング、エンディング演出中は非表示） */}
+        <div className={styles.inputArea} style={{ display: (gameState === 'BRIEFING' || endingPhase === 'FADE_OUT' || endingPhase === 'MENU' || endingPhase === 'REVIEW') ? 'none' : 'flex', flexDirection: 'column', gap: '8px', zIndex: 100 }}>
 
           {/* 入力補助・特殊コマンドボタン */}
           <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
@@ -1481,7 +1733,7 @@ export default function ChatNoir() {
 
           <div className={styles.sidebarSection} style={{ paddingRight: '0.5rem', whiteSpace: 'pre-wrap' }}>
             <h3 onClick={() => setOpenSections(prev => ({ ...prev, howTo: !prev.howTo }))} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>HOW TO PLAY</span>
+              <span>遊び方</span>
               <span style={{ fontSize: '0.7rem', color: '#999' }}>{openSections.howTo ? '▲' : '▼'}</span>
             </h3>
             {openSections.howTo && (
@@ -1738,6 +1990,32 @@ export default function ChatNoir() {
               </div>
             )}
           </div>
+
+          {/* エンディングメニューへ飛ぶボタン (クリア後) */}
+          {messages.some(msg => msg?.parts?.[0]?.text?.includes('【終】')) && endingPhase === 'NONE' && (
+            <div style={{ marginTop: '2rem', paddingBottom: '2rem' }}>
+              <button
+                onClick={() => setEndingPhase('MENU')}
+                style={{
+                  width: '100%',
+                  padding: '1rem',
+                  background: 'transparent',
+                  border: '1px solid var(--accent-red)',
+                  color: 'var(--accent-red)',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  letterSpacing: '2px',
+                  fontSize: '0.9rem',
+                  transition: '0.3s',
+                  boxShadow: '0 4px 15px rgba(255, 0, 0, 0.1)'
+                }}
+                onMouseOver={(e: any) => { e.target.style.background = 'var(--accent-red)'; e.target.style.color = '#fff'; }}
+                onMouseOut={(e: any) => { e.target.style.background = 'transparent'; e.target.style.color = 'var(--accent-red)'; }}
+              >
+                エンディングメニューを開く
+              </button>
+            </div>
+          )}
         </div>
       </aside>
     </div>
