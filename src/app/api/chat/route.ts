@@ -51,9 +51,9 @@ export async function POST(req: NextRequest) {
       const responseSchema = {
         type: "object",
         properties: {
-          "thought_process": { 
-            "type": "string", 
-            "description": "事前に状況を整理し、どこまで描写して止めるか、主人公の行動を代行していないか思考する。" 
+          "thought_process": {
+            "type": "string",
+            "description": "事前に状況を整理し、どこまで描写して止めるか思考する。非常に簡潔に、最大2文程度の極めて短文で行うこと。"
           },
           "scene_blocks": {
             "type": "array",
@@ -61,10 +61,10 @@ export async function POST(req: NextRequest) {
               "type": "object",
               "properties": {
                 "type": { "type": "string", "enum": ["narrative", "dialogue"] },
-                "speaker_true_name": { "type": "string", "description": "dialogueの場合のみ。発言者の本当の名前を設定。" },
+                "speaker_true_name": { "type": "string", "description": "dialogueの場合のみ。発言者の本当の名前を設定。※絶対に主人公（プレイヤー）のセリフを生成してはいけない。必ずNPCの名前になるはずである。" },
                 "is_name_known_to_player": { "type": "boolean", "description": "dialogueの場合のみ。この時点で主人公（プレイヤー）がこの人物の本名をすでに知っているか（劇中で明かされたか）。" },
                 "speaker_display_name": { "type": "string", "description": "dialogueの場合のみ。上記がtrueなら本名を、falseなら『黒服の男』などの外見的特徴を設定する。" },
-                "text": { "type": "string", "description": "地の文、またはセリフの内容。地の文には主人公の心情・感情を含めないこと。※セリフの場合はカギ括弧「」を含めずに中身だけを記述すること。" }
+                "text": { "type": "string", "description": "地の文、またはセリフの内容。※地の文には主人公の感情や、【私が話しかけると】【私の声に】等のようにプレイヤーが入力していない行動の事後捏造を含めないこと。" }
               },
               "required": ["type", "text"]
             },
@@ -80,6 +80,8 @@ export async function POST(req: NextRequest) {
         attempt++;
 
         // 構造化JSON出力でモデルを呼び出し
+        console.log(`\n⏳ [AI生成開始] Attempt: ${attempt}`);
+        const t1 = Date.now();
         let response = await fetchWithRetry(() => ai.models.generateContent({
           model: requestedModel,
           contents: messages,
@@ -90,6 +92,7 @@ export async function POST(req: NextRequest) {
             responseSchema: responseSchema as any
           }
         }));
+        console.log(`✅ [AI生成完了] 処理時間: ${Math.round((Date.now() - t1) / 1000)}秒`);
 
         let gmData;
         try {
@@ -99,6 +102,8 @@ export async function POST(req: NextRequest) {
           responseText = response.text || '';
           break; // パース失敗時はそのまま現状を画面に返す
         }
+
+        let finalMarkdown = '';
 
         // JSONのブロック配列をマークダウンフォーマットに結合
         if (gmData.scene_blocks && Array.isArray(gmData.scene_blocks)) {
@@ -130,8 +135,9 @@ export async function POST(req: NextRequest) {
 3. NPCが自発的に行動したり喋ったりすることは正常な動作です（違反ではありません）。
 
 【判定基準】
-NPCの行動ではなく、「一人称である主人公（プレイヤー）」の思考・感情（「私は～と思った」）・行動（「私は～へ向かった」）・あるいは主人公の【発言】を、GMが勝手に代行・描写してしまっていたら NG。
-プレイヤーの指定の範囲内での行動結果や、周囲の情景・NPCの反応・セリフのみを描写していれば OK。
+NPCの行動ではなく、「一人称である主人公（プレイヤー）」の思考・感情（「私は～と思った」）・明示されていない行動展開（「私は～へ向かった」）・あるいは主人公自身の【発言】を、GMが直後の文章で勝手に代行・描写してしまっていたら NG（理由とともに即却下せよ）。
+※超重要：「私の声に、彼女は驚いた」「私が近づくと」など、NPC側の反応を描写するフリをして、プレイヤーが（直前の宣言において）実際には言っていないアクションやセリフの事後描写を行うことも、極めて巧妙な【主人公の乗っ取り】であるため完全NGとします。
+プレイヤーが指定した範囲内だけの行動結果や、周囲の情景・NPCの自発的な反応・NPCのセリフのみを描写して（主人公にターンを返して）いれば OK。
 
 【プレイヤーの直前の宣言】
 ${lastUserMessage}
@@ -141,19 +147,27 @@ ${finalMarkdown}
 
 違反がある場合は「NG: [具体的な理由]」と出力し、問題なければ「OK」とだけ出力しなさい。`;
 
+        console.log(`🔎 [バリデーター起動] 違反チェック中...`);
+        const t2 = Date.now();
         const validatorResponse = await fetchWithRetry(() => ai.models.generateContent({
           model: 'gemini-3.1-flash-lite-preview',
           contents: [{ role: 'user', parts: [{ text: validationPrompt }] }],
           config: { temperature: 0.1 }
         }));
+        console.log(`✅ [バリデーター完了] 処理時間: ${Math.round((Date.now() - t2) / 1000)}秒`);
 
         const validatorText = validatorResponse.text || '';
         isNG = validatorText.includes('NG');
 
         if (isNG && attempt < maxAttempts) {
-          const reasonMatch = validatorText.match(/NG:?\s*\[?(.+?)\]?/);
-          const reason = reasonMatch ? reasonMatch[1] : validatorText.replace('NG', '').trim();
-          
+          // NGの理由を抽出（NG:, NG: [], などの全パターンに対応）
+          let reason = validatorText.includes('NG:')
+            ? validatorText.split('NG:')[1]
+            : validatorText.replace('NG', '');
+
+          // 前後の余白と不要な括弧を取り除く
+          reason = reason.replace(/^[\[\s]+/, '').replace(/[\]\s]+$/, '');
+
           console.warn("🚨 GMの暴走（主人公の乗っ取り）を検知しました。");
           console.warn(`🛑 違反内容: ${reason || '詳細不明'}`);
           console.log("▼ 暴走と判定されたテキスト:\n", finalMarkdown);

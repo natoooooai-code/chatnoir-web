@@ -127,6 +127,8 @@ const formatNovelText = (text: string, isVertical: boolean) => {
     formatted = formatted.replace(/!(?!\[)/g, '！').replace(/\?(?!\[)/g, '？');
     // 三点リーダーを縦書き用に変換
     formatted = formatted.replace(/\.{3}/g, '…').replace(/…/g, '︙');
+    // ダッシュ（―、—）を縦書き用の罫線（︱: 縦書き用ダッシュ）に変換して中央配置
+    formatted = formatted.replace(/[―—]/g, '︱');
     // クォーテーションをダブルミニュート（縦書き対応）に変換
     let count = 0;
     formatted = formatted.replace(/"/g, () => (count++ % 2 === 0 ? '〝' : '〟'));
@@ -334,6 +336,13 @@ export default function ChatNoir() {
     runStartupInfo();
   }, []);
 
+  // SAVES画面を開くたびに最新のセーブデータを再取得する
+  useEffect(() => {
+    if (isLoaded && gameState === 'SAVES') {
+      getAllIDBSavesMeta().then(metas => setAutoSaves(metas));
+    }
+  }, [gameState, isLoaded]);
+
   // 常にバックアップ (IndexedDB)
   useEffect(() => {
     // 復元が終わる前に上書き保存されるのを防ぐため、isLoadedチェック
@@ -533,23 +542,31 @@ export default function ChatNoir() {
     // いきなりゲームを開始せず、まずはブリーフィング画面へ進む
     setGameState('BRIEFING');
     
-    // 画面遷移時に一番上（先頭）が表示されるようにスクロール位置をリセット
-    window.scrollTo(0, 0);
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = 0;
-      scrollRef.current.scrollLeft = 0;
-    }
+    // 画面遷移時に一番上（先頭）が表示されるようにスクロール位置をリセット（DOM更新後に行うためsetTimeout）
+    setTimeout(() => {
+      window.scrollTo(0, 0);
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = 0;
+        scrollRef.current.scrollLeft = 0;
+      }
+    }, 100);
   };
 
   // ブリーフィング画面で「物語を始める」を押した時の処理（プロローグだけ表示）
   const startInitialChat = () => {
     setGameState('PLAYING');
-    // ページの先頭にスクロールをリセット
-    window.scrollTo(0, 0);
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = 0;
-      scrollRef.current.scrollLeft = 0;
-    }
+    
+    // 初回起動時の強制一番下スクロール（useEffect）が誤ってはたらくのを防ぐフラグ
+    isInitialScrollDone.current = true;
+
+    // ページの先頭にスクロールをリセット（DOM更新後に行うためsetTimeout）
+    setTimeout(() => {
+      window.scrollTo(0, 0);
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = 0;
+        scrollRef.current.scrollLeft = 0;
+      }
+    }, 200);
 
     const outText = prologueText ? prologueText : "（※プロローグファイルが読み込まれていません。行動を入力して開始してください）";
 
@@ -633,13 +650,13 @@ export default function ChatNoir() {
     // UI（小説空間）には出さず、APIの裏側で送るメッセージ
     let triggerText = '';
     if (commandType === 'characters') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。このシナリオの主人公（プレイヤー自身）と、ここまでに登場した人物の基本情報を、以下のJSON形式のみで出力せよ。現時点で主人公が知り得ない裏情報やネタバレは厳禁。\n```json\n{\n  \"characters\": [\n    { \"true_name\": \"本当の名前(一貫したIDとして使用)\", \"is_name_known_to_player\": trueかfalse(劇中で名前が判明しているか), \"name\": \"trueなら本名を、falseなら『黒服の男』などの外見的特徴を出力\", \"gender\": \"male または female または unknown\", \"info\": \"現在主人公が知っている範囲での印象や基本設定\" }\n  ]\n}\n```）";
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。このシナリオの主人公（プレイヤー自身）と、ここまでに登場した人物の基本情報を以下のJSON形式のみで出力せよ。※システムプロンプトの「設定ファイル」にある裏設定や真相を先回りして書くことは【重大なルール違反】です。必ず【これまでのチャット履歴で主人公が実際に知り得た情報のみ】で構成すること。\n```json\n{\n  \"characters\": [\n    { \"true_name\": \"本当の名前(一貫したIDとして使用)\", \"is_name_known_to_player\": trueかfalse(劇中で名前が判明しているか), \"name\": \"trueなら本名を、falseなら『黒服の男』などの外見的特徴を出力\", \"gender\": \"male または female または unknown\", \"info\": \"現在主人公が知っている範囲での印象や基本設定\" }\n  ]\n}\n```）";
     } else if (commandType === 'facts') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公が把握している確定的な事実（判明した事実）を、網羅的に以下のJSON形式のみで出力せよ。ただし、絶対にネタバレをせず、現時点で主人公が直接体験・確認した情報のみに限定すること。\n```json\n{\n  \"facts\": [\"事実1\", \"事実2\"]\n}\n```）";
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公が把握している確定的な事実を以下のJSON形式のみで出力せよ。※「設定ファイル」に記載されている真相や裏設定は絶対に反映させず、必ず【これまでのチャット履歴で主人公が実際に体験・確認した事実のみ】を抽出すること。先回りしたネタバレ記述は厳禁。\n```json\n{\n  \"facts\": [\"事実1\", \"事実2\"]\n}\n```）";
     } else if (commandType === 'mysteries') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公がまだ解決できていない未解決の謎（解くべき課題）を、網羅的に以下のJSON形式のみで出力せよ。ただし、絶対にネタバレをせず、現時点で主人公が「不思議だ」「解決したい」と感じている事項のみを抽出すること。\n```json\n{\n  \"mysteries\": [\"謎1\", \"謎2\"]\n}\n```）";
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公がまだ解決できていない未解決の謎（解くべき課題）を以下のJSON形式のみで出力せよ。※「設定ファイル」にある真相を先回りして謎の形式で提示（例：主人公がまだ知らないトリックの核心を疑問形にする等）することは【重大な違反（ネタバレ）】です。必ず【これまでのチャット履歴のみ】から、今の主人公が純粋に不思議に思っている事だけを抽出すること。\n```json\n{\n  \"mysteries\": [\"謎1\", \"謎2\"]\n}\n```）";
     } else if (commandType === 'monologue') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。これまでの展開を踏まえ、現在の主人公の心境や整理すべき思考を小説の地の文のような独白（モノローグ）の形式で出力せよ。ただし、絶対にメタ的なネタバレを含まず、現時点での主人公の主観的な視点のみで記述すること。\n```json\n{\n  \"monologue\": \"主人公の内心の独白...\"\n}\n```）";
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。これまでの展開を踏まえ、現在の主人公の心境や整理すべき思考を小説の独白形式で出力せよ。※「設定ファイル」の真相に引張られて、主人公が知り得ないメタ的な推論をさせないこと。必ずチャット履歴の範囲内での主観視点で記述すること。\n```json\n{\n  \"monologue\": \"主人公の内心の独白...\"\n}\n```）";
     }
 
     // GMルールから削った「システムコマンドはルールを無視してJSONのみ返せ」という厳格な指示を、この瞬間の最後尾だけに動的に結合させる
@@ -1401,7 +1418,7 @@ export default function ChatNoir() {
               </h2>
               <div className="markdown-body" style={{ background: 'var(--sidebar-bg)', padding: '3rem 4rem', borderRadius: '4px', border: '1px solid var(--border-color)', color: 'var(--text-main)' }}>
                 {briefingText ? (
-                  <ReactMarkdown>{formatNovelText(briefingText, isVertical)}</ReactMarkdown>
+                  <ReactMarkdown>{formatNovelText(briefingText, false)}</ReactMarkdown>
                 ) : (
                   <p>No briefing file loaded.</p>
                 )}
@@ -1634,7 +1651,13 @@ export default function ChatNoir() {
                       <button onClick={handleSaveData} style={{ flex: 1, background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '6px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>手動セーブ</button>
                       <button onClick={handleLoadData} style={{ flex: 1, background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '6px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>手動ロード</button>
                     </div>
-                    <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>シナリオ選択画面へ戻る</button>
+                    <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>シナリオ選択画面へ</button>
+                    <button onClick={() => {
+                      if (confirm("トップ画面へ戻りますか？（現在の進行状況は自動セーブされています）")) {
+                        setGameState('WELCOME'); 
+                        setShowSettings(false);
+                      }
+                    }} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>トップ画面へ戻る</button>
                   </div>
                 )}
               </div>
