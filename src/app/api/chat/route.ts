@@ -1,9 +1,16 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
 
+// フォールバックチェーン（性能が高い順）
+const FALLBACK_CHAIN = [
+  'gemma-4-31b-it',
+  'gemma-4-26b-a4b-it',
+  'gemini-3.1-flash-lite-preview',
+];
+
 export async function POST(req: NextRequest) {
   try {
-    const { apiKey, messages, systemInstruction, model, isReviewMode } = await req.json();
+    const { apiKey, messages, systemInstruction, model, isReviewMode, fallbackEnabled } = await req.json();
 
     if (!apiKey) {
       return NextResponse.json({ error: 'API key is required' }, { status: 400 });
@@ -15,6 +22,15 @@ export async function POST(req: NextRequest) {
 
     const ai = new GoogleGenAI({ apiKey });
     const requestedModel = model || 'gemini-3.1-flash-lite-preview';
+
+    // フォールバック時に試みるモデルのリストを生成
+    const getModelsToTry = (selected: string, enableFallback: boolean): string[] => {
+      if (!enableFallback) return [selected];
+      const idx = FALLBACK_CHAIN.indexOf(selected);
+      if (idx === -1) return [selected, ...FALLBACK_CHAIN];
+      return [...FALLBACK_CHAIN.slice(idx), ...FALLBACK_CHAIN.slice(0, idx)];
+    };
+    const modelsToTry = getModelsToTry(requestedModel, !!fallbackEnabled);
 
     // 指数バックオフ付きのリトライ関数
     const fetchWithRetry = async (fn: () => Promise<any>, maxRetries = 3) => {
@@ -30,6 +46,29 @@ export async function POST(req: NextRequest) {
             const waitTime = Math.pow(2, i) * 1000 + Math.random() * 500;
             console.warn(`[Gemini API] 負荷過多または制限を検知 (${i + 1}/${maxRetries})。${waitTime}ms 後に再試行します...`);
             await new Promise(resolve => setTimeout(resolve, waitTime));
+            continue;
+          }
+          throw error;
+        }
+      }
+      throw lastError;
+    };
+
+    // フォールバック付きのモデル生成ラッパー
+    const generateWithFallback = async (fn: (model: string) => Promise<any>): Promise<{ result: any, usedModel: string }> => {
+      let lastError: any;
+      for (const m of modelsToTry) {
+        try {
+          const result = await fetchWithRetry(() => fn(m));
+          if (m !== requestedModel) {
+            console.info(`✅ [フォールバック成功] ${requestedModel} → ${m}`);
+          }
+          return { result, usedModel: m };
+        } catch (error: any) {
+          const isRetriable = error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE');
+          if (isRetriable && !!fallbackEnabled) {
+            console.warn(`[Fallback] ${m} が利用不可。次のモデルを試みます...`);
+            lastError = error;
             continue;
           }
           throw error;
@@ -76,14 +115,16 @@ export async function POST(req: NextRequest) {
         "required": ["thought_process", "scene_blocks", "location", "time"]
       };
 
+      let firstText = ''; // 1回目の出力を記録しておく
+
       while (attempt < maxAttempts) {
         attempt++;
 
         // 構造化JSON出力でモデルを呼び出し
         console.log(`\n⏳ [AI生成開始] Attempt: ${attempt}`);
         const t1 = Date.now();
-        let response = await fetchWithRetry(() => ai.models.generateContent({
-          model: requestedModel,
+        const { result: response } = await generateWithFallback((m) => ai.models.generateContent({
+          model: m,
           contents: messages,
           config: {
             systemInstruction: retryInstruction,
@@ -125,6 +166,9 @@ export async function POST(req: NextRequest) {
 
         responseText = finalMarkdown;
 
+        // 1回目の出力を保存（フォールバック用）
+        if (attempt === 1) firstText = finalMarkdown;
+
         // --- スリム化された「乗っ取り特化」の事後検知（バリデーター） ---
         const validationPrompt = `あなたはTRPGの厳格なシステム判定器です。
 以下の【前提知識】を理解した上で、【プレイヤーの直前の宣言】に対する【今回のGMの地の文】に違反がないかチェックしてください。
@@ -135,9 +179,19 @@ export async function POST(req: NextRequest) {
 3. NPCが自発的に行動したり喋ったりすることは正常な動作です（違反ではありません）。
 
 【判定基準】
-NPCの行動ではなく、「一人称である主人公（プレイヤー）」の思考・感情（「私は～と思った」）・明示されていない行動展開（「私は～へ向かった」）・あるいは主人公自身の【発言】を、GMが直後の文章で勝手に代行・描写してしまっていたら NG（理由とともに即却下せよ）。
-※超重要：「私の声に、彼女は驚いた」「私が近づくと」など、NPC側の反応を描写するフリをして、プレイヤーが（直前の宣言において）実際には言っていないアクションやセリフの事後描写を行うことも、極めて巧妙な【主人公の乗っ取り】であるため完全NGとします。
-プレイヤーが指定した範囲内だけの行動結果や、周囲の情景・NPCの自発的な反応・NPCのセリフのみを描写して（主人公にターンを返して）いれば OK。
+NPCの行動ではなく、「一人称である主人公（プレイヤー）」の思考・感情（「私は～と思った」）・プレイヤーが直前の宣言で明示していない行動（「私は～へ向かった」）・あるいは主人公自身の発言（「私は～と言った」）を、GMが勝手に代行・描写してしまっていたら NG（理由とともに却下せよ）。
+
+【NGにしない例（正常な描写）】
+- NPCがプレイヤーの入力に反応して振り向く、驚く、返答するなど
+- 「私の声に彼女が顔を上げた」（NPCの反応を描写しているだけ）
+- プレイヤーの行動宣言の直接的な結果（「ドアを開ける」→「ドアが開いた」）
+
+【NGにする例（主人公の乗っ取り）】
+- プレイヤーが宣言していないのに「私は部屋を出た」と書く
+- 「私は怒りを感じた」など主人公の感情を代行する
+- プレイヤーが宣言していないセリフを主人公に言わせる（「私は『助けて』と叫んだ」）
+
+プレイヤーが指定した範囲内の行動結果・周囲の情景・NPCの自発的な反応・NPCのセリフのみを描写して主人公にターンを返していれば OK。
 
 【プレイヤーの直前の宣言】
 ${lastUserMessage}
@@ -149,8 +203,8 @@ ${finalMarkdown}
 
         console.log(`🔎 [バリデーター起動] 違反チェック中...`);
         const t2 = Date.now();
-        const validatorResponse = await fetchWithRetry(() => ai.models.generateContent({
-          model: 'gemini-3.1-flash-lite-preview',
+        const { result: validatorResponse } = await generateWithFallback((m) => ai.models.generateContent({
+          model: m,
           contents: [{ role: 'user', parts: [{ text: validationPrompt }] }],
           config: { temperature: 0.1 }
         }));
@@ -177,13 +231,18 @@ ${finalMarkdown}
           retryInstruction = systemInstruction + `\n\n【システムからの超重要警告】\nあなたの直前の出力は、以下の重大なルール違反を起こしました：\n「${reason}」\n主人公（プレイヤー）の思考・感情・行動を勝手に代行することは絶対禁止です！今回は必ず違反を繰り返さないように出力してください。`;
         } else {
           // 問題なし、または最大リトライ到達でループを抜ける
+          // 最大リトライ到達かつまだNGの場合は1回目の出力を優先
+          if (isNG && attempt >= maxAttempts && firstText) {
+            console.warn("⚠️ 2回目もNGのため、1回目の出力を採用します。");
+            responseText = firstText;
+          }
           break;
         }
       }
     } else {
       // 特殊コマンドや感想戦の場合はプレーンなテキスト生成（従来通り）
-      let response = await fetchWithRetry(() => ai.models.generateContent({
-        model: requestedModel,
+      const { result: response } = await generateWithFallback((m) => ai.models.generateContent({
+        model: m,
         contents: messages,
         config: {
           systemInstruction: systemInstruction || "あなたはミステリーのゲームマスターです。",

@@ -55,20 +55,20 @@ async function loadFromIDB(key: string): Promise<any> {
   } catch (e) { return null; }
 }
 
-async function getAllIDBSavesMeta(): Promise<{ key: string, coverImage: string, saveName: string }[]> {
+async function getAllIDBSavesMeta(): Promise<{ key: string, coverImage: string, saveName: string, lastPlay?: string }[]> {
   try {
     const db = await getIDB();
-    return new Promise<{ key: string, coverImage: string, saveName: string }[]>((resolve, reject) => {
+    return new Promise<{ key: string, coverImage: string, saveName: string, lastPlay?: string }[]>((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, 'readonly');
       const store = tx.objectStore(IDB_STORE);
       const req = store.openCursor();
-      const metaList: { key: string, coverImage: string, saveName: string }[] = [];
+      const metaList: { key: string, coverImage: string, saveName: string, lastPlay?: string }[] = [];
       req.onsuccess = (e: any) => {
         const cursor = e.target.result;
         if (cursor) {
           const key = cursor.key as string;
           if (key.startsWith('auto_save_')) {
-            metaList.push({ key, coverImage: cursor.value.coverImage || '', saveName: cursor.value.saveName || '' });
+            metaList.push({ key, coverImage: cursor.value.coverImage || '', saveName: cursor.value.saveName || '', lastPlay: cursor.value.lastPlay || '' });
           }
           cursor.continue();
         } else {
@@ -152,6 +152,7 @@ export default function ChatNoir() {
 
   // ファイルから読み込んだテキストデータを保持するState
   const [gmRuleText, setGmRuleText] = useState('');
+  const [isCustomGmRule, setIsCustomGmRule] = useState(false);
   const [scenarioText, setScenarioText] = useState('');
   const [briefingText, setBriefingText] = useState('');
   const [prologueText, setPrologueText] = useState('');
@@ -162,10 +163,11 @@ export default function ChatNoir() {
 
   // トーストUI
   const [toastMsg, setToastMsg] = useState('');
-  const [autoSaves, setAutoSaves] = useState<{ key: string, coverImage: string, saveName: string }[]>([]);
+  const [autoSaves, setAutoSaves] = useState<{ key: string, coverImage: string, saveName: string, lastPlay?: string }[]>([]);
 
-  // 選択されたモデル
-  const [selectedModel, setSelectedModel] = useState('gemini-3.1-flash-lite-preview');
+  // 選択されたモデル・フォールバック設定
+  const [selectedModel, setSelectedModel] = useState('gemma-4-31b-it');
+  const [fallbackEnabled, setFallbackEnabled] = useState(false);
 
   // サイドバーの開閉状態
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -244,6 +246,7 @@ export default function ChatNoir() {
     setMysteriesData([]);
     setMonologueData([]);
     setGmRuleText('');
+    setIsCustomGmRule(false);
     setScenarioText('');
     setBriefingText('');
     setPrologueText('');
@@ -307,6 +310,11 @@ export default function ChatNoir() {
     const saved = localStorage.getItem('chatnoir_apiKey');
     if (saved) setApiKey(saved);
 
+    // GMルールを内蔵ファイルから自動ロード（ユーザーが手動でアップロードしない限り使用）
+    fetch('/scenarios/GMルール.md').then(r => r.text()).then(text => {
+      setGmRuleText(prev => prev || text);
+    }).catch(() => {});
+
     const runStartupInfo = async () => {
       // sessionStorageから前回の状態を読み込む（リロード用）
       const currentKey = sessionStorage.getItem('chatnoir-current-save-key');
@@ -349,7 +357,8 @@ export default function ChatNoir() {
     if (isLoaded && gameState !== 'WELCOME' && gameState !== 'SAVES' && gameState !== 'LOGIN') {
       const currentData = {
         gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, endingPhase, reviewMessages
+        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, endingPhase, reviewMessages,
+        lastPlay: new Date().toISOString()
       };
 
       const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
@@ -520,8 +529,8 @@ export default function ChatNoir() {
   };
 
   const handleStartLogin = () => {
-    if (apiKey.trim() === '' || !gmRuleText || !scenarioText || !prologueText || !briefingText) {
-      alert("必須項目（APIキー、GMルール、設定ファイル、プロローグ、概要ファイル）をすべてセットしてください！");
+    if (apiKey.trim() === '' || !scenarioText || !prologueText || !briefingText) {
+      alert("必須項目（APIキー、設定ファイル、プロローグ、概要ファイル）をすべてセットしてください！");
       return;
     }
     if (!saveName.trim()) {
@@ -601,7 +610,8 @@ export default function ChatNoir() {
           apiKey: apiKey,
           model: selectedModel,
           messages: phase2History,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText
+          systemInstruction: gmRuleText + "\n\n" + scenarioText,
+          fallbackEnabled
         })
       });
       const data = await res.json();
@@ -674,7 +684,8 @@ export default function ChatNoir() {
           apiKey: apiKey,
           model: selectedModel,
           messages: apiMessages,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText
+          systemInstruction: gmRuleText + "\n\n" + scenarioText,
+          fallbackEnabled
         })
       });
       const data = await res.json();
@@ -911,7 +922,8 @@ export default function ChatNoir() {
           apiKey: apiKey,
           model: selectedModel,
           messages: newHistory,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText
+          systemInstruction: gmRuleText + "\n\n" + scenarioText,
+          fallbackEnabled
         })
       });
       const data = await res.json();
@@ -979,7 +991,8 @@ export default function ChatNoir() {
           model: selectedModel,
           messages: newHistory,
           isReviewMode: true,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText + "\n\n" + REVIEW_SYSTEM_PROMPT
+          systemInstruction: gmRuleText + "\n\n" + scenarioText + "\n\n" + REVIEW_SYSTEM_PROMPT,
+          fallbackEnabled
         })
       });
       const data = await res.json();
@@ -1118,6 +1131,11 @@ export default function ChatNoir() {
                       {meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, '')}
                     </div>
                   )}
+                  {meta.lastPlay && (
+                    <div style={{ color: '#555', fontSize: '0.65rem' }}>
+                      最終プレイ: {new Date(meta.lastPlay).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
                     <button onClick={() => handleAutoSaveLoad(meta.key)} style={{ flex: 1, background: '#e0e0e0', color: '#000', border: 'none', padding: '6px 0', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer', marginRight: '8px' }}>プレイ再開</button>
                     <button onClick={(e) => handleDeleteSave(meta.key, e)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid rgba(255,68,68,0.4)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer' }}>削除</button>
@@ -1208,12 +1226,20 @@ export default function ChatNoir() {
               onChange={(e) => setSelectedModel(e.target.value)}
               style={{ width: '100%', padding: '0.8rem', background: 'rgba(255,255,255,0.5)', color: '#111', border: '1px solid rgba(0,0,0,0.15)', borderRadius: '2px', fontFamily: 'inherit' }}
             >
-              <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (推奨)</option>
-              <option value="gemini-3.0-flash-preview">Gemini 3.1 Flash</option>
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-              <option value="gemma-4-31b-it">Gemma 4 31B</option>
+              <option value="gemma-4-31b-it">Gemma 4 31B（推奨）</option>
+              <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
+              <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash-Lite（軽量高速）</option>
             </select>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+              <span style={{ fontSize: '0.8rem', color: '#555' }}>フォールバック（混雑時に自動で下位モデルへ切替）</span>
+              <div
+                onClick={() => setFallbackEnabled(!fallbackEnabled)}
+                style={{ width: '40px', height: '20px', background: fallbackEnabled ? '#4a7c59' : '#ccc', borderRadius: '20px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s', flexShrink: 0 }}
+              >
+                <div style={{ position: 'absolute', top: '2px', left: fallbackEnabled ? '22px' : '2px', width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s' }} />
+              </div>
+            </div>
 
             <div style={{ marginTop: '1rem' }}>
               <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>プロジェクト名（必須）</label>
@@ -1268,14 +1294,6 @@ export default function ChatNoir() {
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
               <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
-                <IconFile /> GMルール
-                {gmRuleText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
-              </p>
-              <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setGmRuleText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
-            </div>
-
-            <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
-              <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
                 <IconFile /> 設定ファイル
                 {scenarioText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
@@ -1298,10 +1316,22 @@ export default function ChatNoir() {
               <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setPrologueText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
             </div>
 
+            <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)', opacity: 0.7 }}>
+              <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
+                <IconFile /> GMルール
+                {isCustomGmRule
+                  ? <span style={{ color: '#f59e0b', marginLeft: '8px', fontSize: '0.7rem' }}>✎ カスタムルール適用中</span>
+                  : <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 内蔵ルールを使用中</span>
+                }
+              </p>
+              <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>独自ルールに差し替える場合のみアップロード</p>
+              <input type="file" accept=".md,.txt" onChange={(e) => { handleFileRead(e, setGmRuleText); setIsCustomGmRule(true); }} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+            </div>
+
             <button
               className={styles.btn}
               onClick={handleStartLogin}
-              style={{ opacity: (!apiKey || !gmRuleText || !scenarioText || !prologueText || !briefingText) ? 0.5 : 1 }}
+              style={{ opacity: (!apiKey || !scenarioText || !prologueText || !briefingText) ? 0.5 : 1 }}
             >
               物語の準備へ
             </button>
@@ -1651,6 +1681,20 @@ export default function ChatNoir() {
                       <button onClick={handleSaveData} style={{ flex: 1, background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '6px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>手動セーブ</button>
                       <button onClick={handleLoadData} style={{ flex: 1, background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '6px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>手動ロード</button>
                     </div>
+                    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>AIモデル</p>
+                      <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                        <option value="gemma-4-31b-it">Gemma 4 31B</option>
+                        <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
+                        <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash-Lite</option>
+                      </select>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-main)' }}>フォールバック</span>
+                        <div onClick={() => setFallbackEnabled(!fallbackEnabled)} style={{ width: '36px', height: '18px', background: fallbackEnabled ? '#4a7c59' : 'var(--border-color)', borderRadius: '18px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s' }}>
+                          <div style={{ position: 'absolute', top: '1px', left: fallbackEnabled ? '19px' : '1px', width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s' }} />
+                        </div>
+                      </div>
+                    </div>
                     <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>シナリオ選択画面へ</button>
                     <button onClick={() => {
                       if (confirm("トップ画面へ戻りますか？（現在の進行状況は自動セーブされています）")) {
@@ -1764,18 +1808,10 @@ export default function ChatNoir() {
             </h3>
             {openSections.howTo && (
               <div style={{ color: 'var(--text-main)', fontSize: '0.85rem', lineHeight: '1.8', margin: '1rem 0' }}>
-                <h4 style={{ marginBottom: '8px', color: 'var(--text-main)', fontSize: '0.9rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>▼ 入力のアドバイス</h4>
-                <ul style={{ paddingLeft: '1.2rem', marginBottom: '1.5rem' }}>
-                  <li style={{ marginBottom: '0.5rem' }}><strong>「」セリフ</strong>：登場人物としての発言</li>
-                  <li style={{ marginBottom: '0.5rem' }}><strong>行動・自由入力</strong>：ドアを開ける、見回す等</li>
-                  <li><strong>※GMへ：</strong> システムに対して、現在のメタな状況確認やメタ質問を行いたい時に使います</li>
-                </ul>
-
-                <h4 style={{ marginBottom: '8px', color: 'var(--text-main)', fontSize: '0.9rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>▼ システム情報（手帳の更新）</h4>
                 <ul style={{ paddingLeft: '1.2rem' }}>
-                  <li style={{ marginBottom: '0.5rem' }}><strong>人物情報ボタン</strong>：出逢った人物の印象・情報整理</li>
-                  <li style={{ marginBottom: '0.5rem' }}><strong>事実確認ボタン</strong>：判明した事実・謎の整理</li>
-                  <li><strong>モノローグボタン</strong>：現在の主人公の独白を自動記述</li>
+                  <li style={{ marginBottom: '0.5rem' }}><strong>「」</strong>：主人公としての発言</li>
+                  <li style={{ marginBottom: '0.5rem' }}><strong>自由入力</strong>：主人公としての行動</li>
+                  <li><strong>※GMへ：</strong> メタな状況確認や質問</li>
                 </ul>
               </div>
             )}
