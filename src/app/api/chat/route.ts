@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
+import { getValidationPrompt } from './validatorPrompt';
 
 // フォールバックチェーン（性能が高い順）
 const FALLBACK_CHAIN = [
@@ -10,7 +11,7 @@ const FALLBACK_CHAIN = [
 
 export async function POST(req: NextRequest) {
   try {
-    const { apiKey, messages, systemInstruction, model, isReviewMode, fallbackEnabled } = await req.json();
+    const { apiKey, messages, systemInstruction, model, isReviewMode, fallbackEnabled, scenarioMeta } = await req.json();
 
     if (!apiKey) {
       return NextResponse.json({ error: 'API key is required' }, { status: 400 });
@@ -40,8 +41,8 @@ export async function POST(req: NextRequest) {
           return await fn();
         } catch (error: any) {
           lastError = error;
-          // 429 (Rate Limit) or 503 (Overloaded) はリトライ対象
-          const isRetriable = error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE');
+          // 429 (Rate Limit) / 503 (Overloaded) / Timeout / fetch failed はリトライ対象
+          const isRetriable = error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE') || error.message?.includes('TIMEOUT') || error.message?.includes('timeout') || error.message?.includes('fetch failed');
           if (isRetriable && i < maxRetries - 1) {
             const waitTime = Math.pow(2, i) * 1000 + Math.random() * 500;
             console.warn(`[Gemini API] 負荷過多または制限を検知 (${i + 1}/${maxRetries})。${waitTime}ms 後に再試行します...`);
@@ -55,17 +56,18 @@ export async function POST(req: NextRequest) {
     };
 
     // フォールバック付きのモデル生成ラッパー
-    const generateWithFallback = async (fn: (model: string) => Promise<any>): Promise<{ result: any, usedModel: string }> => {
+    const generateWithFallback = async (fn: (model: string) => Promise<any>, overrideModelsToTry?: string[]): Promise<{ result: any, usedModel: string }> => {
       let lastError: any;
-      for (const m of modelsToTry) {
+      const models = overrideModelsToTry || modelsToTry;
+      for (const m of models) {
         try {
           const result = await fetchWithRetry(() => fn(m));
-          if (m !== requestedModel) {
-            console.info(`✅ [フォールバック成功] ${requestedModel} → ${m}`);
+          if (m !== requestedModel && (!overrideModelsToTry || overrideModelsToTry[0] !== m)) {
+            console.info(`✅ [フォールバック成功] ${overrideModelsToTry ? overrideModelsToTry[0] : requestedModel} → ${m}`);
           }
           return { result, usedModel: m };
         } catch (error: any) {
-          const isRetriable = error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE');
+          const isRetriable = error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE') || error.message?.includes('TIMEOUT') || error.message?.includes('timeout') || error.message?.includes('fetch failed');
           if (isRetriable && !!fallbackEnabled) {
             console.warn(`[Fallback] ${m} が利用不可。次のモデルを試みます...`);
             lastError = error;
@@ -150,9 +152,26 @@ export async function POST(req: NextRequest) {
         if (gmData.scene_blocks && Array.isArray(gmData.scene_blocks)) {
           finalMarkdown = gmData.scene_blocks.map((block: any) => {
             if (block.type === 'dialogue') {
-              const speaker = block.speaker_display_name || block.speaker_name || block.speaker_true_name || '不明';
-              const cleanText = block.text.replace(/^「+/, '').replace(/」+$/, '').replace(/。$/, '');
-              return `**${speaker}**「${cleanText}」`;
+              let speaker = block.speaker_display_name || block.speaker_true_name || '';
+              let dialogueText = block.text || '';
+
+              // テキスト内に「名前「セリフ」」形式が含まれる場合、名前とセリフを分離
+              if (!speaker) {
+                const nameMatch = dialogueText.match(/^([^「」\s]{1,20})[\s]*「/);
+                if (nameMatch) {
+                  speaker = nameMatch[1];
+                  dialogueText = dialogueText.slice(nameMatch[0].length - 1); // 「を残す
+                }
+              }
+              if (!speaker) speaker = '不明';
+
+              // セリフ本文のクリーンアップ（括弧・句読点の残骸を除去）
+              dialogueText = dialogueText
+                .replace(/^[\s「]+/, '')       // 先頭の空白・「を除去
+                .replace(/[」，、。\s]+$/, '')  // 末尾の」，、。・空白を除去
+                .replace(/。$/, '');            // 最後の句点を除去
+
+              return `**${speaker}**「${dialogueText}」`;
             } else {
               return block.text;
             }
@@ -170,36 +189,11 @@ export async function POST(req: NextRequest) {
         if (attempt === 1) firstText = finalMarkdown;
 
         // --- スリム化された「乗っ取り特化」の事後検知（バリデーター） ---
-        const validationPrompt = `あなたはTRPGの厳格なシステム判定器です。
-以下の【前提知識】を理解した上で、【プレイヤーの直前の宣言】に対する【今回のGMの地の文】に違反がないかチェックしてください。
+        const validationPrompt = getValidationPrompt(lastUserMessage, finalMarkdown, scenarioMeta);
 
-【前提知識】
-1. このゲームは「一人称（私、僕、俺など）」視点のテキストアドベンチャーです。
-2. 「プレイヤー ＝ 主人公 ＝ 一人称」です。それ以外の固有名称（名前）を持つ人物はすべてNPCです。
-3. NPCが自発的に行動したり喋ったりすることは正常な動作です（違反ではありません）。
-
-【判定基準】
-NPCの行動ではなく、「一人称である主人公（プレイヤー）」の思考・感情（「私は～と思った」）・プレイヤーが直前の宣言で明示していない行動（「私は～へ向かった」）・あるいは主人公自身の発言（「私は～と言った」）を、GMが勝手に代行・描写してしまっていたら NG（理由とともに却下せよ）。
-
-【NGにしない例（正常な描写）】
-- NPCがプレイヤーの入力に反応して振り向く、驚く、返答するなど
-- 「私の声に彼女が顔を上げた」（NPCの反応を描写しているだけ）
-- プレイヤーの行動宣言の直接的な結果（「ドアを開ける」→「ドアが開いた」）
-
-【NGにする例（主人公の乗っ取り）】
-- プレイヤーが宣言していないのに「私は部屋を出た」と書く
-- 「私は怒りを感じた」など主人公の感情を代行する
-- プレイヤーが宣言していないセリフを主人公に言わせる（「私は『助けて』と叫んだ」）
-
-プレイヤーが指定した範囲内の行動結果・周囲の情景・NPCの自発的な反応・NPCのセリフのみを描写して主人公にターンを返していれば OK。
-
-【プレイヤーの直前の宣言】
-${lastUserMessage}
-
-【今回のGMの描写テキスト全体】
-${finalMarkdown}
-
-違反がある場合は「NG: [具体的な理由]」と出力し、問題なければ「OK」とだけ出力しなさい。`;
+        const validatorFallbackChain = fallbackEnabled
+          ? ['gemma-4-26b-a4b-it', 'gemini-3.1-flash-lite-preview', 'gemma-4-31b-it']
+          : ['gemma-4-26b-a4b-it'];
 
         console.log(`🔎 [バリデーター起動] 違反チェック中...`);
         const t2 = Date.now();
@@ -207,7 +201,7 @@ ${finalMarkdown}
           model: m,
           contents: [{ role: 'user', parts: [{ text: validationPrompt }] }],
           config: { temperature: 0.1 }
-        }));
+        }), validatorFallbackChain);
         console.log(`✅ [バリデーター完了] 処理時間: ${Math.round((Date.now() - t2) / 1000)}秒`);
 
         const validatorText = validatorResponse.text || '';

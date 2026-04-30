@@ -18,18 +18,24 @@ export async function POST(req: NextRequest) {
 
     // 1. 設定ファイル（systemInstruction）＋ 会話履歴（contextText）から、該当キャラクターの外見情報を抽出する
     const extractionPrompt = `
-あなたはキャラクターデザインのアシスタントです。
-以下の【シナリオ設定】および【これまでのゲームプレイの文脈】の中から、「${characterName}」という名前のキャラクターの「外見（年齢、性別、髪型、服装、雰囲気など）」に関する情報を探し出し、画像生成AIのための英語のプロンプト（カンマ区切りの短い単語の羅列）を作成してください。
+あなたはキャラクターデザインの専門家です。
+以下の【シナリオ設定】および【ゲーム文脈】から、「${characterName}」というキャラクターの外見情報を抽出し、画像生成AIのための英語プロンプト（カンマ区切り）を作成してください。
 
-もし設定や文脈内に外見の記載がない場合は、名前の響きや役割から適当な外見を推測して作成してください。
-必ず出力には年齢に関するワード（例: 25yo, 30s man）を含め、最後に ", bust-up portrait, upper body only, anime style portrait, solid light gray background, highly detailed" を付けてください。全身画像にならないように注意してください。
-出力は英語のプロンプトの文字列のみとしてください。
+【厳守事項】
+1. 日本語、解説、マークダウン、キャラクターの固有名詞（ローマ字含む）は一切出力しないでください。
+2. 情報が不足している場合は、名前の響きや役割から適当な外見を必ず推測・創作して補ってください。空欄は許されません。
+3. 最初に「1girl」または「1boy」または「1man」などの性別と人数のベースタグを置いてください。
+4. 次に「20s, short black hair, wearing a white shirt, serious expression」などの外見や年齢のタグを置いてください。
+5. 必ず最後に「, bust-up portrait, upper body only, anime style portrait, solid light gray background, highly detailed」を付けて出力してください。
+
+【出力形式の例】
+1girl, 20s, long brown hair, wearing a police uniform, smiling, bust-up portrait, upper body only, anime style portrait, solid light gray background, highly detailed
 
 【シナリオ設定】
 ${systemInstruction}
 
-【これまでのゲームプレイの文脈】
-${contextText || '（まだ会話はありません）'}
+【ゲーム文脈】
+${contextText || 'なし'}
 `;
 
     const descriptionRes = await ai.models.generateContent({
@@ -38,7 +44,7 @@ ${contextText || '（まだ会話はありません）'}
       config: { temperature: 0.5 }
     });
 
-    const imagePrompt = descriptionRes.text?.trim() || `portrait of ${characterName}, anime style portrait, solid light gray background`;
+    const imagePrompt = descriptionRes.text?.trim() || `1 person, bust-up portrait, anime style portrait, solid light gray background, highly detailed`;
 
     console.log(`[Avatar Gen] Extracted Prompt for ${characterName}:`, imagePrompt);
 

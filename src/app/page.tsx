@@ -150,6 +150,10 @@ export default function ChatNoir() {
   const [reviewMessages, setReviewMessages] = useState<any[]>([]);
   const [reviewInputText, setReviewInputText] = useState('');
 
+  // GMモーダル用
+  const [isGmModalOpen, setIsGmModalOpen] = useState(false);
+  const [gmInputText, setGmInputText] = useState('');
+
   // ファイルから読み込んだテキストデータを保持するState
   const [gmRuleText, setGmRuleText] = useState('');
   const [isCustomGmRule, setIsCustomGmRule] = useState(false);
@@ -157,6 +161,8 @@ export default function ChatNoir() {
   const [briefingText, setBriefingText] = useState('');
   const [prologueText, setPrologueText] = useState('');
   const [scenarioTitle, setScenarioTitle] = useState('New Scenario');
+  // シナリオメタデータ（4_シナリオ修正.mdから抽出）
+  const [scenarioMeta, setScenarioMeta] = useState<{ title?: string, protagonistName?: string, protagonistFirstPerson?: string }>({});
 
   // カバー画像
   const [coverImage, setCoverImage] = useState<string>('');
@@ -196,8 +202,13 @@ export default function ChatNoir() {
   const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(450);
   const leftDragRef = useRef<boolean>(false);
 
-  // 設定ファイルからタイトルを自動抽出
+  // 設定ファイルからタイトルを自動抽出（メタデータがない場合のフォールバック）
   useEffect(() => {
+    // メタデータのtitleが優先
+    if (scenarioMeta.title) {
+      setScenarioTitle(scenarioMeta.title);
+      return;
+    }
     if (!scenarioText) return;
     const lines = scenarioText.split('\n');
     const titleHeaderIdx = lines.findIndex(l => l.includes('## 1. タイトル'));
@@ -210,7 +221,7 @@ export default function ChatNoir() {
         setScenarioTitle(extracted);
       }
     }
-  }, [scenarioText]);
+  }, [scenarioText, scenarioMeta]);
 
   // セッション状態の復元判定
   const [isLoaded, setIsLoaded] = useState(false);
@@ -257,6 +268,7 @@ export default function ChatNoir() {
     setEndingPhase('NONE');
     setReviewMessages([]);
     setReviewInputText('');
+    setScenarioMeta({});
     sessionStorage.removeItem('chatnoir-current-save-key');
   };
 
@@ -282,6 +294,7 @@ export default function ChatNoir() {
     setMonologueData(parsed.monologueData ? (Array.isArray(parsed.monologueData) ? parsed.monologueData : [parsed.monologueData]) : []);
     if (parsed.theme) setTheme(parsed.theme);
     setScenarioTitle(parsed.scenarioTitle || 'New Scenario');
+    setScenarioMeta(parsed.scenarioMeta || {});
     if (parsed.fontFamily) setFontFamily(parsed.fontFamily);
     if (parsed.fontSize) setFontSize(parsed.fontSize);
     if (parsed.isVertical !== undefined) setIsVertical(parsed.isVertical);
@@ -357,7 +370,7 @@ export default function ChatNoir() {
     if (isLoaded && gameState !== 'WELCOME' && gameState !== 'SAVES' && gameState !== 'LOGIN') {
       const currentData = {
         gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, endingPhase, reviewMessages,
+        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages,
         lastPlay: new Date().toISOString()
       };
 
@@ -369,7 +382,7 @@ export default function ChatNoir() {
       sessionStorage.setItem('chatnoir-current-save-key', runKey);
       saveToIDB(runKey, currentData);
     }
-  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, endingPhase, reviewMessages]);
+  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages]);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -501,6 +514,22 @@ export default function ChatNoir() {
           setBriefingText(text);
         } else if (name.includes('gm') || name.includes('ルール')) {
           setGmRuleText(text);
+        } else if (name.includes('修正') || name.includes('meta')) {
+          // メタデータファイル（4_シナリオ修正.md）のパース
+          const metaJsonMatch = text.match(/```json\s*([\s\S]*?)```/);
+          if (metaJsonMatch) {
+            try {
+              const parsed = JSON.parse(metaJsonMatch[1].trim());
+              setScenarioMeta({
+                title: parsed.title || undefined,
+                protagonistName: parsed.protagonist_name || undefined,
+                protagonistFirstPerson: parsed.protagonist_first_person || undefined,
+              });
+              console.log('📋 [メタデータ読み込み完了]', parsed);
+            } catch (e) {
+              console.warn('メタデータJSONのパースに失敗:', e);
+            }
+          }
         }
       };
       reader.readAsText(file);
@@ -611,7 +640,8 @@ export default function ChatNoir() {
           model: selectedModel,
           messages: phase2History,
           systemInstruction: gmRuleText + "\n\n" + scenarioText,
-          fallbackEnabled
+          fallbackEnabled,
+          scenarioMeta
         })
       });
       const data = await res.json();
@@ -666,7 +696,7 @@ export default function ChatNoir() {
     } else if (commandType === 'mysteries') {
       triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公がまだ解決できていない未解決の謎（解くべき課題）を以下のJSON形式のみで出力せよ。※「設定ファイル」にある真相を先回りして謎の形式で提示（例：主人公がまだ知らないトリックの核心を疑問形にする等）することは【重大な違反（ネタバレ）】です。必ず【これまでのチャット履歴のみ】から、今の主人公が純粋に不思議に思っている事だけを抽出すること。\n```json\n{\n  \"mysteries\": [\"謎1\", \"謎2\"]\n}\n```）";
     } else if (commandType === 'monologue') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。これまでの展開を踏まえ、現在の主人公の心境や整理すべき思考を小説の独白形式で出力せよ。※「設定ファイル」の真相に引張られて、主人公が知り得ないメタ的な推論をさせないこと。必ずチャット履歴の範囲内での主観視点で記述すること。\n```json\n{\n  \"monologue\": \"主人公の内心の独白...\"\n}\n```）";
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。これまでの展開を踏まえ、現在の主人公の心境、疑念、あるいは決意を、まるでミステリー小説の幕間のモノローグ（地の文）のように文学的でドラマチックに出力せよ。※「設定ファイル」の真相に引張られて、主人公が知り得ないメタ的な推論をさせないこと。必ずチャット履歴の範囲内での主観視点で、感情豊かに記述すること。\n出力は以下のJSON形式のみとし、改行を入れる場合は必ず `\\n` を使って表現すること。\n```json\n{\n  \"monologue\": \"小説のモノローグのような地の文...\\n\\n（改行を含む）...\"\n}\n```）";
     }
 
     // GMルールから削った「システムコマンドはルールを無視してJSONのみ返せ」という厳格な指示を、この瞬間の最後尾だけに動的に結合させる
@@ -685,7 +715,8 @@ export default function ChatNoir() {
           model: selectedModel,
           messages: apiMessages,
           systemInstruction: gmRuleText + "\n\n" + scenarioText,
-          fallbackEnabled
+          fallbackEnabled,
+          scenarioMeta
         })
       });
       const data = await res.json();
@@ -900,13 +931,19 @@ export default function ChatNoir() {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // --- 通常の行動入力 ---
-  const sendMessage = async () => {
-    if (!inputText.trim() || isLoading) return;
+  const sendMessage = async (overrideText?: string, isGm: boolean = false) => {
+    const textToSend = overrideText !== undefined ? overrideText : inputText;
+    if (!textToSend.trim() || isLoading) return;
 
-    const newUserMsg = { role: 'user', parts: [{ text: inputText }] };
+    const actualText = isGm ? `※GMへ：\n${textToSend}` : textToSend;
+    const newUserMsg = { role: 'user', parts: [{ text: actualText }], isGm };
     const newHistory = [...messages, newUserMsg];
     setMessages(newHistory);
-    setInputText('');
+    
+    if (overrideText === undefined) {
+      setInputText('');
+    }
+    
     setIsLoading(true);
     // 自分が送信した直後だけは一番下（最新の自分の入力）までスクロールさせる
     setTimeout(() => scrollToBottom(), 100);
@@ -923,12 +960,13 @@ export default function ChatNoir() {
           model: selectedModel,
           messages: newHistory,
           systemInstruction: gmRuleText + "\n\n" + scenarioText,
-          fallbackEnabled
+          fallbackEnabled,
+          scenarioMeta
         })
       });
       const data = await res.json();
       if (res.ok) {
-        setMessages([...newHistory, { role: 'model', parts: [{ text: data.text }] }]);
+        setMessages([...newHistory, { role: 'model', parts: [{ text: data.text }], isGm }]);
         // エンディング判定：AIのレスポンスに【終】が含まれていたらエンディング待機状態へ
         if (data.text.includes('【終】') && endingPhase === 'NONE') {
           setEndingPhase('READY_TO_END');
@@ -940,6 +978,15 @@ export default function ChatNoir() {
           ? "【ご案内】現在、AIサーバーが一時的に非常に混み合っています。自動リトライを行いましたが解決しませんでした。数十秒ほど待ってから、もう一度送信してみてください。"
           : "エラーが発生しました: " + errorStr;
         alert(msg);
+        
+        // 再送処理：履歴からユーザー発言を取り除き、入力欄に戻す
+        setMessages(messages);
+        if (isGm) {
+          setGmInputText(textToSend);
+          setIsGmModalOpen(true);
+        } else if (overrideText === undefined) {
+          setInputText(textToSend);
+        }
       }
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -947,6 +994,15 @@ export default function ChatNoir() {
       } else {
         console.error(err);
         alert("通信に失敗しました。");
+      }
+      
+      // 再送処理
+      setMessages(messages);
+      if (isGm) {
+        setGmInputText(textToSend);
+        setIsGmModalOpen(true);
+      } else if (overrideText === undefined) {
+        setInputText(textToSend);
       }
     } finally {
       setIsLoading(false);
@@ -992,7 +1048,8 @@ export default function ChatNoir() {
           messages: newHistory,
           isReviewMode: true,
           systemInstruction: gmRuleText + "\n\n" + scenarioText + "\n\n" + REVIEW_SYSTEM_PROMPT,
-          fallbackEnabled
+          fallbackEnabled,
+          scenarioMeta
         })
       });
       const data = await res.json();
@@ -1001,12 +1058,16 @@ export default function ChatNoir() {
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
         alert("エラーが発生しました: " + errorStr);
+        setReviewMessages(baseHistory);
+        if (!isInitial) setReviewInputText(prompt);
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         console.error(err);
         alert("通信に失敗しました。");
       }
+      setReviewMessages(baseHistory);
+      if (!isInitial) setReviewInputText(prompt);
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
@@ -1025,6 +1086,7 @@ export default function ChatNoir() {
     return messages.map((msg, index) => {
       // システム起動メッセージ(0)とメインゲーム開始指示(2)は非表示
       if (index === 0 || index === 2) return null;
+      if (msg.isGm) return null;
 
       return (
         <div
@@ -1406,7 +1468,7 @@ export default function ChatNoir() {
                   </div>
                 );
               })}
-              {isLoading && <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', padding: '1rem', fontSize: '0.9rem' }}>🖋 GMが記述中……</p>}
+              {isLoading && <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', padding: '1rem', fontSize: '0.9rem' }}>🖋 GMが執筆中……</p>}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
@@ -1531,7 +1593,7 @@ export default function ChatNoir() {
 
           {isLoading && (
             <div className="fade-in writing-indicator" style={{ color: 'var(--text-muted)', marginTop: '2rem', fontStyle: 'italic' }}>
-              🖋 記述中……
+              🖋 執筆中……
             </div>
           )}
         </div>
@@ -1707,7 +1769,7 @@ export default function ChatNoir() {
               </div>
 
               <button onClick={() => insertTags('「', '」')} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer' }}>「」セリフ</button>
-              <button onClick={() => setInputText("※GMへ：")} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer' }}>※GMへ：</button>
+              <button onClick={() => setIsGmModalOpen(true)} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer' }}>GMに質問する</button>
             </div>
           </div>
 
@@ -1731,6 +1793,68 @@ export default function ChatNoir() {
               }}
               disabled={isLoading || gameState === 'BRIEFING'}
             />
+            
+            {/* GMモーダル */}
+            {isGmModalOpen && (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div className="fade-in" style={{ background: 'var(--sidebar-bg)', padding: '2rem', borderRadius: '8px', border: '1px solid var(--border-color)', width: '90%', maxWidth: '600px', display: 'flex', flexDirection: 'column', gap: '1rem', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', backdropFilter: 'blur(10px)', maxHeight: '90vh' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '2px' }}>GMへ質問・相談する</h3>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0, marginTop: '4px' }}>メタな質問や状況の確認などをGMに直接送ります。本編には表示されません。</p>
+                    </div>
+                    <button onClick={() => setIsGmModalOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                  </div>
+                  
+                  {/* GMチャット履歴表示エリア */}
+                  <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem', minHeight: '200px' }}>
+                    {messages.filter(m => m.isGm).length === 0 ? (
+                       <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', marginTop: '2rem' }}>まだGMとのやりとりはありません</p>
+                    ) : (
+                      messages.filter(m => m.isGm).map((m, idx) => (
+                        <div key={idx} style={{ 
+                          background: m.role === 'user' ? 'transparent' : 'var(--sidebar-bg)',
+                          border: m.role === 'user' ? 'none' : '1px solid var(--border-color)',
+                          padding: '0.8rem', borderRadius: '4px', color: m.role === 'user' ? 'var(--text-muted)' : 'var(--text-main)',
+                          fontSize: '0.9rem', whiteSpace: 'pre-wrap', lineHeight: 1.6
+                        }}>
+                          {m.role === 'user' && <span style={{ fontWeight: 'bold' }}>あなた：<br/></span>}
+                          {m.role === 'model' && <span style={{ fontWeight: 'bold', color: 'var(--accent-red)' }}>GM：<br/></span>}
+                          <ReactMarkdown>{m.parts[0].text.replace(/^※GMへ：\n/, '')}</ReactMarkdown>
+                        </div>
+                      ))
+                    )}
+                    {isLoading && messages[messages.length - 1]?.isGm && messages[messages.length - 1]?.role === 'user' && (
+                      <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.9rem', textAlign: 'center' }}>🖋 GMが執筆中……</p>
+                    )}
+                  </div>
+
+                  <textarea
+                    value={gmInputText}
+                    onChange={e => setGmInputText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                        if (gmInputText.trim()) {
+                          sendMessage(gmInputText, true);
+                          setGmInputText('');
+                        }
+                      }
+                    }}
+                    style={{ width: '100%', minHeight: '80px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit' }}
+                    placeholder="例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Ctrl+Enterで送信)"
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                    <button onClick={() => {
+                      if (gmInputText.trim()) {
+                        sendMessage(gmInputText, true);
+                        setGmInputText('');
+                      }
+                    }} disabled={!gmInputText.trim() || isLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: (!gmInputText.trim() || isLoading) ? 'not-allowed' : 'pointer', opacity: (!gmInputText.trim() || isLoading) ? 0.5 : 1, transition: '0.2s' }}>送信する</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end' }}>
               <div style={{ position: 'absolute', top: '-45px', right: '0', width: '100%', display: 'flex', gap: '5px', zIndex: 10 }}>
                 {/* 最新へ（左側） */}
@@ -1765,7 +1889,7 @@ export default function ChatNoir() {
               </div>
               <button
                 className={styles.sendBtn}
-                onClick={sendMessage}
+                onClick={() => sendMessage()}
                 disabled={isLoading || gameState === 'BRIEFING'}
                 style={{ height: '40px', padding: '0 2rem' }}
               >
@@ -1842,7 +1966,7 @@ export default function ChatNoir() {
                       <summary style={{ cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', outline: 'none' }}>
                         独白 #{i + 1} {i === monologueData.length - 1 ? '(最新)' : ''}
                       </summary>
-                      <p style={{ fontFamily: 'var(--app-font)', fontSize: '0.85rem', fontStyle: 'italic', lineHeight: '1.8', color: 'var(--text-main)', paddingLeft: '1rem', borderLeft: '2px solid var(--border-color)' }}>
+                      <p style={{ fontFamily: 'var(--app-font)', fontSize: '0.85rem', fontStyle: 'italic', lineHeight: '1.8', color: 'var(--text-main)', paddingLeft: '1rem', borderLeft: '2px solid var(--border-color)', whiteSpace: 'pre-wrap' }}>
                         「 {text} 」
                       </p>
                     </details>
