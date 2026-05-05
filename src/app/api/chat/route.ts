@@ -11,7 +11,7 @@ const FALLBACK_CHAIN = [
 
 export async function POST(req: NextRequest) {
   try {
-    const { apiKey, messages, systemInstruction, model, isReviewMode, fallbackEnabled, scenarioMeta } = await req.json();
+    const { apiKey, messages, systemInstruction, model, isReviewMode, fallbackEnabled, scenarioMeta, assistantMode } = await req.json();
 
     if (!apiKey) {
       return NextResponse.json({ error: 'API key is required' }, { status: 400 });
@@ -38,11 +38,15 @@ export async function POST(req: NextRequest) {
       let lastError: any;
       for (let i = 0; i < maxRetries; i++) {
         try {
-          return await fn();
+          // 60秒のタイムアウトを設定
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('TIMEOUT: AI response took too long')), 60000)
+          );
+          return await Promise.race([fn(), timeoutPromise]);
         } catch (error: any) {
           lastError = error;
-          // 429 (Rate Limit) / 503 (Overloaded) / Timeout / fetch failed はリトライ対象
-          const isRetriable = error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE') || error.message?.includes('TIMEOUT') || error.message?.includes('timeout') || error.message?.includes('fetch failed');
+          // 429 (Rate Limit) / 500 (Internal) / 503 (Overloaded) / Timeout / fetch failed はリトライ対象
+          const isRetriable = error.message?.includes('500') || error.message?.includes('INTERNAL') || error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE') || error.message?.includes('TIMEOUT') || error.message?.includes('timeout') || error.message?.includes('fetch failed');
           if (isRetriable && i < maxRetries - 1) {
             const waitTime = Math.pow(2, i) * 1000 + Math.random() * 500;
             console.warn(`[Gemini API] 負荷過多または制限を検知 (${i + 1}/${maxRetries})。${waitTime}ms 後に再試行します...`);
@@ -67,7 +71,7 @@ export async function POST(req: NextRequest) {
           }
           return { result, usedModel: m };
         } catch (error: any) {
-          const isRetriable = error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE') || error.message?.includes('TIMEOUT') || error.message?.includes('timeout') || error.message?.includes('fetch failed');
+          const isRetriable = error.message?.includes('500') || error.message?.includes('INTERNAL') || error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE') || error.message?.includes('TIMEOUT') || error.message?.includes('timeout') || error.message?.includes('fetch failed');
           if (isRetriable && !!fallbackEnabled) {
             console.warn(`[Fallback] ${m} が利用不可。次のモデルを試みます...`);
             lastError = error;
@@ -81,6 +85,62 @@ export async function POST(req: NextRequest) {
 
     // 【1回目】通常の文章生成
     let responseText = '';
+
+    if (assistantMode === 'support') {
+      const supportSchema = {
+        type: 'object',
+        properties: {
+          reply: {
+            type: 'string',
+            description: 'プレイヤーへの助言本文。親しみはありつつ簡潔にまとめる。'
+          },
+          suggestions: {
+            type: 'array',
+            description: 'このままGMや本編入力欄へ送れる具体的な入力候補。1件から3件。',
+            items: {
+              type: 'string'
+            }
+          }
+        },
+        required: ['reply', 'suggestions']
+      };
+
+      const { result: response } = await generateWithFallback((m) => ai.models.generateContent({
+        model: m,
+        contents: messages,
+        config: {
+          systemInstruction: systemInstruction || 'あなたはプレイヤー支援AIです。',
+          temperature: 0.6,
+          responseMimeType: 'application/json',
+          responseSchema: supportSchema as any,
+        }
+      }));
+
+      let supportPayload: { reply?: string; suggestions?: string[] } = {};
+      try {
+        supportPayload = JSON.parse(response.text || '{}');
+      } catch (error) {
+        console.error('Support JSON parse error:', response.text, error);
+      }
+
+      return NextResponse.json({
+        text: supportPayload.reply || response.text || '',
+        suggestions: Array.isArray(supportPayload.suggestions) ? supportPayload.suggestions.slice(0, 3) : []
+      });
+    }
+
+    if (assistantMode === 'gm') {
+      const { result: response } = await generateWithFallback((m) => ai.models.generateContent({
+        model: m,
+        contents: messages,
+        config: {
+          systemInstruction: systemInstruction || 'あなたはミステリーのゲームマスターです。プレイヤーからのメタな質問に簡潔に答えてください。',
+          temperature: 0.4,
+        }
+      }));
+
+      return NextResponse.json({ text: response.text || '' });
+    }
 
     if (!isSystemCommand && !isReviewMode) {
       let isNG = false;
@@ -105,7 +165,7 @@ export async function POST(req: NextRequest) {
                 "speaker_true_name": { "type": "string", "description": "dialogueの場合のみ。発言者の本当の名前を設定。※絶対に主人公（プレイヤー）のセリフを生成してはいけない。必ずNPCの名前になるはずである。" },
                 "is_name_known_to_player": { "type": "boolean", "description": "dialogueの場合のみ。この時点で主人公（プレイヤー）がこの人物の本名をすでに知っているか（劇中で明かされたか）。" },
                 "speaker_display_name": { "type": "string", "description": "dialogueの場合のみ。上記がtrueなら本名を、falseなら『黒服の男』などの外見的特徴を設定する。" },
-                "text": { "type": "string", "description": "地の文、またはセリフの内容。※地の文には主人公の感情や、【私が話しかけると】【私の声に】等のようにプレイヤーが入力していない行動の事後捏造を含めないこと。" }
+                "text": { "type": "string", "description": "地の文、またはセリフの内容。※プレイヤーの宣言内容を繰り返したり、要約して書き始めたりしないこと。即座に「その行動の結果」や「周囲の反応」から描写を開始せよ。また、地の文には主人公の感情や、プレイヤーが入力していない行動の事後捏造を含めないこと。" }
               },
               "required": ["type", "text"]
             },
@@ -148,6 +208,77 @@ export async function POST(req: NextRequest) {
 
         let finalMarkdown = '';
 
+        // --- プリチェック（キーワード検索による高速判定） ---
+        const firstPersonList = [
+          '俺', 'おれ', 'オレ',
+          '私', 'わたし', 'ワタシ', 'わたくし', 'あたくし',
+          '僕', 'ぼく', 'ボク',
+          'あたし', 'アタシ',
+          '自分', '己', 'うち'
+        ];
+        const protagonistKeywords = [
+          ...(scenarioMeta.protagonistName ? [scenarioMeta.protagonistName, scenarioMeta.protagonistName.replace(/\s+/g, '')] : []),
+          ...(scenarioMeta.protagonistFirstPerson ? [scenarioMeta.protagonistFirstPerson] : []),
+          ...firstPersonList
+        ];
+
+        let needsAiValidation = false;
+        let matchedKeyword = '';
+        let matchedText = '';
+        const blocks = (gmData.scene_blocks || []) as any[];
+
+        for (const block of blocks) {
+          if (block.type === 'narrative') {
+            // キーワードが「主語（は・が・も）」として使われているか、または単体で存在するかを正規表現でチェック
+            const found = protagonistKeywords.find(k => {
+              // キーワードの直後に「は」「が」「も」が来るか、句読点や文末が来るパターン
+              const regex = new RegExp(`${k}(?:は|が|も|[、。！？」\\s]|$)`);
+              return regex.test(block.text);
+            });
+            if (found) {
+              needsAiValidation = true;
+              matchedKeyword = found;
+              matchedText = block.text;
+              break;
+            }
+          } else if (block.type === 'dialogue') {
+            const speaker = (block.speaker_true_name || block.speaker_display_name || '').replace(/\s+/g, '');
+            const pName = (scenarioMeta.protagonistName || '').replace(/\s+/g, '');
+            if (pName && (speaker.includes(pName) || speaker === pName)) {
+              needsAiValidation = true;
+              matchedKeyword = `発話者名: ${speaker}`;
+              matchedText = `「${block.text}」`;
+              break;
+            }
+          }
+        }
+
+        if (needsAiValidation) {
+          console.log(`🔎 [バリデーター起動] キーワード「${matchedKeyword}」を検知。対象: ${matchedText}`);
+          const validationPrompt = getValidationPrompt(lastUserMessage, JSON.stringify(gmData.scene_blocks), scenarioMeta);
+          const t2 = Date.now();
+          const { result: validatorResponse } = await generateWithFallback((m) => ai.models.generateContent({
+            model: m,
+            contents: [{ role: 'user', parts: [{ text: validationPrompt }] }],
+            config: { temperature: 0.1 }
+          }), modelsToTry);
+          console.log(`✅ [バリデーター完了] 処理時間: ${Math.round((Date.now() - t2) / 1000)}秒`);
+
+          const validatorText = validatorResponse.text || '';
+          isNG = validatorText.includes('NG');
+
+          if (isNG && attempt < maxAttempts) {
+            let reason = validatorText.includes('NG:') ? validatorText.split('NG:')[1] : validatorText.replace('NG', '');
+            reason = reason.replace(/^[\[\s]+/, '').replace(/[\]\s]+$/, '');
+            console.warn(`🚨 暴走検知: ${reason}`);
+            retryInstruction = systemInstruction + `\n\n【重要：前回の出力が却下された理由】\n${reason}\n\n上記を改善し、主人公を操作せず再描写してください。`;
+            continue;
+          }
+        } else {
+          console.log(`✨ [バリデーター省略] 安全と判断されました。`);
+          isNG = false;
+        }
+
         // JSONのブロック配列をマークダウンフォーマットに結合
         if (gmData.scene_blocks && Array.isArray(gmData.scene_blocks)) {
           finalMarkdown = gmData.scene_blocks.map((block: any) => {
@@ -180,7 +311,8 @@ export async function POST(req: NextRequest) {
 
         // ステータスバー行の自動追加
         if (gmData.location && gmData.time) {
-          finalMarkdown += `\n\n📍 [${gmData.location}] | 🕐 [${gmData.time}]`;
+          const formattedTime = (gmData.time || '').replace(/:/g, '：');
+          finalMarkdown += `\n\n📍 [${gmData.location}] | 🕐 [${formattedTime}]`;
         }
 
         responseText = finalMarkdown;
@@ -188,50 +320,12 @@ export async function POST(req: NextRequest) {
         // 1回目の出力を保存（フォールバック用）
         if (attempt === 1) firstText = finalMarkdown;
 
-        // --- スリム化された「乗っ取り特化」の事後検知（バリデーター） ---
-        const validationPrompt = getValidationPrompt(lastUserMessage, finalMarkdown, scenarioMeta);
-
-        const validatorFallbackChain = fallbackEnabled
-          ? ['gemma-4-26b-a4b-it', 'gemini-3.1-flash-lite-preview', 'gemma-4-31b-it']
-          : ['gemma-4-26b-a4b-it'];
-
-        console.log(`🔎 [バリデーター起動] 違反チェック中...`);
-        const t2 = Date.now();
-        const { result: validatorResponse } = await generateWithFallback((m) => ai.models.generateContent({
-          model: m,
-          contents: [{ role: 'user', parts: [{ text: validationPrompt }] }],
-          config: { temperature: 0.1 }
-        }), validatorFallbackChain);
-        console.log(`✅ [バリデーター完了] 処理時間: ${Math.round((Date.now() - t2) / 1000)}秒`);
-
-        const validatorText = validatorResponse.text || '';
-        isNG = validatorText.includes('NG');
-
-        if (isNG && attempt < maxAttempts) {
-          // NGの理由を抽出（NG:, NG: [], などの全パターンに対応）
-          let reason = validatorText.includes('NG:')
-            ? validatorText.split('NG:')[1]
-            : validatorText.replace('NG', '');
-
-          // 前後の余白と不要な括弧を取り除く
-          reason = reason.replace(/^[\[\s]+/, '').replace(/[\]\s]+$/, '');
-
-          console.warn("🚨 GMの暴走（主人公の乗っ取り）を検知しました。");
-          console.warn(`🛑 違反内容: ${reason || '詳細不明'}`);
-          console.log("▼ 暴走と判定されたテキスト:\n", finalMarkdown);
-          console.warn("自動修復（再生成）を実行します...");
-
-          // リトライ時は重要警告を追加した上で再度システムを呼ぶ
-          retryInstruction = systemInstruction + `\n\n【システムからの超重要警告】\nあなたの直前の出力は、以下の重大なルール違反を起こしました：\n「${reason}」\n主人公（プレイヤー）の思考・感情・行動を勝手に代行することは絶対禁止です！今回は必ず違反を繰り返さないように出力してください。`;
-        } else {
-          // 問題なし、または最大リトライ到達でループを抜ける
-          // 最大リトライ到達かつまだNGの場合は1回目の出力を優先
-          if (isNG && attempt >= maxAttempts && firstText) {
-            console.warn("⚠️ 2回目もNGのため、1回目の出力を採用します。");
-            responseText = firstText;
-          }
-          break;
+        // バリデーションを通過した、または最大リトライ到達
+        if (isNG && attempt >= maxAttempts && firstText) {
+          console.warn("⚠️ 2回目もNGのため、1回目の出力を採用します。");
+          responseText = firstText;
         }
+        break;
       }
     } else {
       // 特殊コマンドや感想戦の場合はプレーンなテキスト生成（従来通り）

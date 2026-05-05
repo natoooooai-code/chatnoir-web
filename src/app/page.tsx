@@ -1,6 +1,21 @@
 'use client';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { v4 as uuidv4 } from 'uuid';
+import '@xyflow/react/dist/style.css';
+import MapFlowCanvas from '@/components/MapFlowCanvas';
+import {
+  DEFAULT_MAP_LAYER_NAME,
+  DEFAULT_MAP_STATE,
+  getMapLayerNames,
+  getMapNodeLabel,
+  normalizeMapPayload,
+  normalizeStoredMapState,
+  parseMapState,
+  type GraphMapLayer,
+  type GraphMapState,
+  type MapCurrentPos,
+} from '@/lib/mapGraph';
 import styles from './page.module.css';
 
 // --- SVG Icons ---
@@ -12,16 +27,25 @@ const IconMessage = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="
 const IconSearch = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', marginBottom: '-2px' }}><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
 const IconBook = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', marginBottom: '-2px' }}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>;
 const IconRefresh = ({ size = 12 }: { size?: number }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px' }}><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>;
+const IconMap = ({ size = 14, style }: { size?: number; style?: React.CSSProperties }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', marginBottom: '-2px', ...style }}><path d="M1 6v12l7-4 8 4 7-4V2l-7 4-8-4-7 4z"></path><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>;
+const BetaBadge = () => <span style={{ fontSize: '0.58rem', letterSpacing: '1.4px', fontWeight: 700, padding: '2px 6px', borderRadius: '999px', background: '#f59e0b', color: '#111827' }}>BETA</span>;
 
 const IDB_STORE = 'chatnoir_saves';
+const SCENARIO_STORE = 'scenario_master';
 const IDB_KEY = 'auto_save';
+const SUPPORT_AVATAR_PATH = '/Chibi-style_close-up_face_portrait_of_an_anime_gir-1775997248547.png';
+const DEFAULT_SUPPORT_PERSONA_PATH = '/support-personas/lore-support.md';
+const SUPPORT_SUGGESTION_PROMPT = '今の状況で次にGMへ送ると良さそうな入力文を3つ提案して。探索・質問・人物確認など方向性が散るようにして、そのまま使える文面で出して。';
 
 async function getIDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = window.indexedDB.open('ChatNoirDB', 1);
+    const req = window.indexedDB.open('ChatNoirDB', 2);
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(IDB_STORE)) {
         req.result.createObjectStore(IDB_STORE);
+      }
+      if (!req.result.objectStoreNames.contains(SCENARIO_STORE)) {
+        req.result.createObjectStore(SCENARIO_STORE);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -93,6 +117,42 @@ async function deleteFromIDB(key: string): Promise<void> {
   } catch (e) { console.error(e); }
 }
 
+// --- Scenario Master Helpers ---
+async function saveScenarioMaster(title: string, data: any) {
+  try {
+    const db = await getIDB();
+    const tx = db.transaction(SCENARIO_STORE, 'readwrite');
+    const store = tx.objectStore(SCENARIO_STORE);
+    await new Promise((resolve, reject) => {
+      const req = store.put(data, title);
+      req.onsuccess = resolve;
+      req.onerror = reject;
+    });
+  } catch (e) { console.error(e); }
+}
+
+async function getAllScenarioMasters(): Promise<any[]> {
+  try {
+    const db = await getIDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(SCENARIO_STORE, 'readonly');
+      const store = tx.objectStore(SCENARIO_STORE);
+      const req = store.openCursor();
+      const list: any[] = [];
+      req.onsuccess = (e: any) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          list.push({ title: cursor.key, ...cursor.value });
+          cursor.continue();
+        } else {
+          resolve(list);
+        }
+      };
+      req.onerror = reject;
+    });
+  } catch (e) { return []; }
+}
+
 // 小説風のテキスト整形ユーティリティ（セリフ以外の段落に全角スペースを補完）
 const formatNovelText = (text: string, isVertical: boolean) => {
   if (!text) return '';
@@ -141,25 +201,81 @@ const formatNovelText = (text: string, isVertical: boolean) => {
   return formatted;
 };
 
+// 地図(MAP)の更新ルール (graph JSON版)
+const MAP_INSTRUCTION = `
+【地図(MAP)の更新ルール】
+あなたは物語の舞台を「graph JSON」で管理しています。
+システムから地図更新の依頼があった場合、以下のJSON形式で、現在主人公が把握している繋がりをすべて出力してください。
+
+JSON構造:
+{
+  "map": {
+    "currentPos": {"nodeId": "node_id", "layer": "レイヤー名"},
+    "layers": {
+      "全体マップ": {
+        "direction": "LR",
+        "nodes": [
+          { "id": "home", "label": "自宅", "kind": "place", "status": "visited" },
+          { "id": "main_road", "label": "県道", "kind": "route", "status": "known" }
+        ],
+        "edges": [
+          { "id": "edge_1", "source": "home", "target": "main_road", "kind": "path", "bidirectional": true }
+        ]
+      }
+    }
+  }
+}
+
+- layer: マップのシート名（例：「全体マップ」「洋館 1F」など）。
+- nodeId: 現在主人公が立っている場所のノードID。
+- layers: レイヤー名ごとの地図データです。通常は「全体マップ」を含めてください。
+- direction: "LR" または "TD" を使用してください。
+- nodes: 主人公が把握している場所や通路の一覧です。id は英数字とアンダースコア中心の安全な識別子にしてください。
+- edges: ノード同士の接続です。道・廊下・階段・門など、移動の意味がわかるように必要なら中継ノードを挟んでください。
+- status: visited / known / unknown を使ってください。
+- kind: place / route / room / corridor / stairs / junction などの分類を使えます。
+- まだ主人公が知らない場所や接続は絶対に含めないでください。
+`;
+
+const cloneDefaultMapState = (): GraphMapState => structuredClone(DEFAULT_MAP_STATE);
+const cloneDefaultMapLayers = (): Record<string, GraphMapLayer> => structuredClone(DEFAULT_MAP_STATE.layers);
+const cloneDefaultCurrentPos = (): MapCurrentPos => ({ ...DEFAULT_MAP_STATE.currentPos! });
+
 export default function ChatNoir() {
   const [apiKey, setApiKey] = useState('');
-
   // ゲームの進行ステータス
   const [gameState, setGameState] = useState<'WELCOME' | 'SAVES' | 'LOGIN' | 'BRIEFING' | 'PLAYING'>('WELCOME');
   const [endingPhase, setEndingPhase] = useState<'NONE' | 'READY_TO_END' | 'FADE_OUT' | 'MENU' | 'REVIEW'>('NONE');
   const [reviewMessages, setReviewMessages] = useState<any[]>([]);
   const [reviewInputText, setReviewInputText] = useState('');
+  const [isSidebarUpdating, setIsSidebarUpdating] = useState(false);
+
+  // マップ用ステート (graph JSON版)
+  const [mapLayers, setMapLayers] = useState<Record<string, GraphMapLayer>>(() => cloneDefaultMapLayers());
+  const [currentPos, setCurrentPos] = useState<MapCurrentPos>(() => cloneDefaultCurrentPos());
+  const [activeLayer, setActiveLayer] = useState(DEFAULT_MAP_LAYER_NAME);
+  const [isMapModalOpen, setIsMapModalOpen] = useState(false);
 
   // GMモーダル用
   const [isGmModalOpen, setIsGmModalOpen] = useState(false);
   const [gmInputText, setGmInputText] = useState('');
+  const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
+  const [isSupportSidebarOpen, setIsSupportSidebarOpen] = useState(false);
+  const [supportInputText, setSupportInputText] = useState('');
+  const [supportMessages, setSupportMessages] = useState<any[]>([]);
+  const [supportSuggestions, setSupportSuggestions] = useState<string[]>([]);
+  const [isSupportLoading, setIsSupportLoading] = useState(false);
+  const [supportScrollTarget, setSupportScrollTarget] = useState<string | null>(null);
 
   // ファイルから読み込んだテキストデータを保持するState
   const [gmRuleText, setGmRuleText] = useState('');
+  const [supportPersonaPath, setSupportPersonaPath] = useState(DEFAULT_SUPPORT_PERSONA_PATH);
+  const [supportPersonaPrompt, setSupportPersonaPrompt] = useState('');
   const [isCustomGmRule, setIsCustomGmRule] = useState(false);
   const [scenarioText, setScenarioText] = useState('');
   const [briefingText, setBriefingText] = useState('');
   const [prologueText, setPrologueText] = useState('');
+  const [mapFileText, setMapFileText] = useState('');
   const [scenarioTitle, setScenarioTitle] = useState('New Scenario');
   // シナリオメタデータ（4_シナリオ修正.mdから抽出）
   const [scenarioMeta, setScenarioMeta] = useState<{ title?: string, protagonistName?: string, protagonistFirstPerson?: string }>({});
@@ -170,6 +286,13 @@ export default function ChatNoir() {
   // トーストUI
   const [toastMsg, setToastMsg] = useState('');
   const [autoSaves, setAutoSaves] = useState<{ key: string, coverImage: string, saveName: string, lastPlay?: string }[]>([]);
+  const [masterScenarios, setMasterScenarios] = useState<any[]>([]);
+
+  // 起動時に保存データを取得
+  useEffect(() => {
+    getAllIDBSavesMeta().then(setAutoSaves);
+    getAllScenarioMasters().then(setMasterScenarios);
+  }, []);
 
   // 選択されたモデル・フォールバック設定
   const [selectedModel, setSelectedModel] = useState('gemma-4-31b-it');
@@ -186,6 +309,22 @@ export default function ChatNoir() {
   const [playerMemo, setPlayerMemo] = useState<string>('');
 
   const [openSections, setOpenSections] = useState({ howTo: true, monologue: true, characters: true, facts: true, mysteries: true, memo: true });
+
+  const currentNodeLabel = useMemo(() => getMapNodeLabel(mapLayers, currentPos), [mapLayers, currentPos]);
+
+  const applyMapState = (nextMapState: GraphMapState, mode: 'merge' | 'replace' = 'merge') => {
+    const nextLayers = Object.keys(nextMapState.layers).length > 0 ? nextMapState.layers : cloneDefaultMapLayers();
+    const nextCurrentPos = nextMapState.currentPos || (mode === 'replace' ? cloneDefaultCurrentPos() : currentPos);
+
+    if (mode === 'replace') {
+      setMapLayers(nextLayers);
+    } else {
+      setMapLayers((prev) => ({ ...prev, ...nextLayers }));
+    }
+
+    setCurrentPos(nextCurrentPos);
+    setActiveLayer(nextCurrentPos.layer || Object.keys(nextLayers)[0] || DEFAULT_MAP_LAYER_NAME);
+  };
 
   const toggleAllSections = (expand: boolean) => {
     setOpenSections({ howTo: expand, monologue: expand, characters: expand, facts: expand, mysteries: expand, memo: expand });
@@ -223,6 +362,7 @@ export default function ChatNoir() {
     }
   }, [scenarioText, scenarioMeta]);
 
+
   // セッション状態の復元判定
   const [isLoaded, setIsLoaded] = useState(false);
   // 各プレイスルーの一意識別子（同シナリオ複数周回対応）
@@ -238,6 +378,24 @@ export default function ChatNoir() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const isInitialScrollDone = useRef(false);
+  const supportScrollRef = useRef<HTMLDivElement>(null);
+  const supportAbortControllerRef = useRef<AbortController | null>(null);
+
+  // シナリオテキストから初期マップ情報を抽出
+  useEffect(() => {
+    // すでにメッセージが開始されている場合や、初期値以外のグラフがある場合はスキップ
+    if (!scenarioText || messages.length > 2) return; 
+
+    const parsedMapState = parseMapState(scenarioText);
+    if (parsedMapState) {
+      try {
+        applyMapState(parsedMapState, 'replace');
+        console.info("シナリオから初期マップ(graph JSON)を読み込みました");
+      } catch (e) {
+        console.error("Initial map parse error:", e);
+      }
+    }
+  }, [scenarioText, messages.length]);
 
   const insertTags = (prefix: string, suffix: string) => {
     setInputText(prev => prev + prefix + suffix);
@@ -250,17 +408,39 @@ export default function ChatNoir() {
     }, 10);
   };
 
+  // 地図ファイル単体で読み込まれた場合のパース処理
+  useEffect(() => {
+    if (!mapFileText) return;
+
+    const parsedMapState = parseMapState(mapFileText);
+    if (parsedMapState) {
+      try {
+        applyMapState(parsedMapState, 'replace');
+        console.info("地図（graph JSON形式）をセットしました");
+      } catch (e) {
+        console.warn("Map file parse error:", e);
+      }
+    }
+  }, [mapFileText]);
+
   const resetAllState = () => {
     setMessages([]);
+    setSupportMessages([]);
+    setSupportSuggestions([]);
+    setGmInputText('');
+    setSupportInputText('');
     setCharactersData([]);
     setFactsData([]);
     setMysteriesData([]);
     setMonologueData([]);
     setGmRuleText('');
+    setSupportPersonaPath(DEFAULT_SUPPORT_PERSONA_PATH);
+    setSupportPersonaPrompt('');
     setIsCustomGmRule(false);
     setScenarioText('');
     setBriefingText('');
     setPrologueText('');
+    setMapFileText('');
     setCoverImage('');
     setSaveName('');
     setSessionRunId('');
@@ -268,7 +448,14 @@ export default function ChatNoir() {
     setEndingPhase('NONE');
     setReviewMessages([]);
     setReviewInputText('');
+    setIsGmModalOpen(false);
+    setIsSupportModalOpen(false);
+    setIsSupportSidebarOpen(false);
     setScenarioMeta({});
+    const defaultMapState = cloneDefaultMapState();
+    setMapLayers(defaultMapState.layers);
+    setCurrentPos(defaultMapState.currentPos || cloneDefaultCurrentPos());
+    setActiveLayer(defaultMapState.currentPos?.layer || DEFAULT_MAP_LAYER_NAME);
     sessionStorage.removeItem('chatnoir-current-save-key');
   };
 
@@ -280,12 +467,17 @@ export default function ChatNoir() {
   const restoreStateData = (parsed: any, targetGameState?: string) => {
     // 明示的な指定があればそれを使用、なければ保存されたもの、それもなければPLAYING
     const nextState = targetGameState || parsed.gameState || 'PLAYING';
+    const shouldOpenGmModal = parsed.isGmModalOpen === true;
+    const shouldOpenSupportSidebar = parsed.isSupportSidebarOpen === true;
+    const shouldOpenSupportModal = !shouldOpenSupportSidebar && parsed.isSupportModalOpen === true;
     setGameState(nextState as any);
     setMessages(parsed.messages || []);
     setGmRuleText(parsed.gmRuleText || '');
+    setSupportPersonaPath(parsed.supportPersonaPath || DEFAULT_SUPPORT_PERSONA_PATH);
     setScenarioText(parsed.scenarioText || '');
     setBriefingText(parsed.briefingText || '');
     setPrologueText(parsed.prologueText || '');
+    setMapFileText(parsed.mapFileText || '');
     setCoverImage(parsed.coverImage || '');
     if (parsed.apiKey) setApiKey(parsed.apiKey); // APIキーは未保存でも消さない
     setCharactersData(parsed.charactersData || []);
@@ -306,6 +498,18 @@ export default function ChatNoir() {
     setPlayerMemo(parsed.playerMemo || '');
     setEndingPhase(parsed.endingPhase || 'NONE');
     setReviewMessages(parsed.reviewMessages || []);
+    setGmInputText(parsed.gmInputText || '');
+    setIsGmModalOpen(shouldOpenGmModal);
+    setSupportMessages(parsed.supportMessages || []);
+    setSupportSuggestions(parsed.supportSuggestions || []);
+    setSupportInputText(parsed.supportInputText || '');
+    setIsSupportSidebarOpen(shouldOpenSupportSidebar);
+    setIsSupportModalOpen(shouldOpenSupportModal);
+    setSupportScrollTarget(null);
+    const restoredMapState = normalizeStoredMapState(parsed);
+    setMapLayers(restoredMapState.layers);
+    setCurrentPos(restoredMapState.currentPos || cloneDefaultCurrentPos());
+    setActiveLayer(restoredMapState.currentPos?.layer || Object.keys(restoredMapState.layers)[0] || DEFAULT_MAP_LAYER_NAME);
 
     // 復元後、DOMのレンダリングを待ってから最新メッセージへスクロール
     setTimeout(() => scrollToBottom(), 150);
@@ -317,6 +521,15 @@ export default function ChatNoir() {
       sessionStorage.setItem('chatnoir-current-gameState', gameState);
     }
   }, [gameState, isLoaded]);
+
+  useEffect(() => {
+    fetch(supportPersonaPath)
+      .then(r => r.text())
+      .then(text => {
+        setSupportPersonaPrompt(text);
+      })
+      .catch(() => {});
+  }, [supportPersonaPath]);
 
   // マウント時に保存されたキー・オートセーブを読み込む
   useEffect(() => {
@@ -369,8 +582,9 @@ export default function ChatNoir() {
     // 復元が終わる前に上書き保存されるのを防ぐため、isLoadedチェック
     if (isLoaded && gameState !== 'WELCOME' && gameState !== 'SAVES' && gameState !== 'LOGIN') {
       const currentData = {
-        gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages,
+        gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey,
+        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, gmInputText, isGmModalOpen, supportMessages, supportSuggestions, supportPersonaPath, supportInputText, isSupportModalOpen, isSupportSidebarOpen,
+        mapLayers, currentPos,
         lastPlay: new Date().toISOString()
       };
 
@@ -382,7 +596,7 @@ export default function ChatNoir() {
       sessionStorage.setItem('chatnoir-current-save-key', runKey);
       saveToIDB(runKey, currentData);
     }
-  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages]);
+  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, gmInputText, isGmModalOpen, supportMessages, supportSuggestions, supportPersonaPath, supportInputText, isSupportModalOpen, isSupportSidebarOpen, mapLayers, currentPos]);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -404,6 +618,24 @@ export default function ChatNoir() {
         scrollRef.current.scrollTop = 0;
       }
     }
+  };
+
+  const scrollSupportToBottom = () => {
+    if (supportScrollRef.current) {
+      supportScrollRef.current.scrollTop = supportScrollRef.current.scrollHeight;
+    }
+  };
+
+  const scrollSupportToAnchor = (anchorId: string) => {
+    const container = supportScrollRef.current;
+    const anchor = container?.querySelector<HTMLElement>(`[data-support-anchor="${anchorId}"]`);
+
+    if (container && anchor) {
+      container.scrollTo({ top: Math.max(anchor.offsetTop - 8, 0), behavior: 'smooth' });
+      return;
+    }
+
+    scrollSupportToBottom();
   };
 
   // サイドバーのリサイズ処理
@@ -445,6 +677,29 @@ export default function ChatNoir() {
       }, 500); // レンダリング完了まで余裕を持つ
     }
   }, [isLoaded, gameState, messages.length]);
+
+  useEffect(() => {
+    if (!supportScrollTarget) return;
+    if (!isSupportModalOpen && !isSupportSidebarOpen) return;
+
+    const timer = window.setTimeout(() => {
+      scrollSupportToAnchor(supportScrollTarget);
+      setSupportScrollTarget(null);
+    }, 40);
+
+    return () => window.clearTimeout(timer);
+  }, [supportScrollTarget, isSupportModalOpen, isSupportSidebarOpen]);
+
+  useEffect(() => {
+    if (!isSupportModalOpen && !isSupportSidebarOpen) return;
+    if (supportScrollTarget) return;
+
+    const timer = window.setTimeout(() => {
+      scrollSupportToBottom();
+    }, 40);
+
+    return () => window.clearTimeout(timer);
+  }, [isSupportModalOpen, isSupportSidebarOpen, supportScrollTarget]);
 
   // ホイールスクロールの縦書き変換処理
   useEffect(() => {
@@ -512,6 +767,18 @@ export default function ChatNoir() {
           setPrologueText(text);
         } else if (name.includes('briefing') || name.includes('概要')) {
           setBriefingText(text);
+        } else if (name.includes('map') || name.includes('地図')) {
+          setMapFileText(text);
+
+          const parsedMapState = parseMapState(text);
+          if (parsedMapState) {
+            try {
+              applyMapState(parsedMapState, 'replace');
+              console.log('🗺️ [マップ読み込み完了]');
+            } catch (e) {
+              console.warn('マップJSONのパースに失敗:', e);
+            }
+          }
         } else if (name.includes('gm') || name.includes('ルール')) {
           setGmRuleText(text);
         } else if (name.includes('修正') || name.includes('meta')) {
@@ -576,6 +843,21 @@ export default function ChatNoir() {
     // 新しいセッションIDを発行（同じシナリオでも別スロットに保存される）
     const newId = Date.now().toString(36);
     setSessionRunId(newId);
+
+    // シナリオマスターに保存（次回の再利用のため）
+    saveScenarioMaster(scenarioTitle, {
+      gmRuleText,
+      scenarioText,
+      briefingText,
+      prologueText,
+      mapFileText,
+      mapLayers,
+      currentPos,
+      coverImage,
+      scenarioMeta,
+      lastUpdated: new Date().toISOString()
+    });
+    getAllScenarioMasters().then(setMasterScenarios);
 
     // いきなりゲームを開始せず、まずはブリーフィング画面へ進む
     setGameState('BRIEFING');
@@ -683,20 +965,23 @@ export default function ChatNoir() {
   };
 
   // --- 特殊コマンド（JSON抽出） ---
-  const requestSpecialCommand = async (commandType: 'characters' | 'facts' | 'mysteries' | 'monologue', overrideMessages?: any[]) => {
+  const requestSpecialCommand = async (commandType: 'characters' | 'facts' | 'mysteries' | 'monologue' | 'map', overrideMessages?: any[]) => {
     if (isLoading) return;
     setIsLoading(true);
+    setIsSidebarUpdating(true);
 
     // UI（小説空間）には出さず、APIの裏側で送るメッセージ
     let triggerText = '';
     if (commandType === 'characters') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。このシナリオの主人公（プレイヤー自身）と、ここまでに登場した人物の基本情報を以下のJSON形式のみで出力せよ。※システムプロンプトの「設定ファイル」にある裏設定や真相を先回りして書くことは【重大なルール違反】です。必ず【これまでのチャット履歴で主人公が実際に知り得た情報のみ】で構成すること。\n```json\n{\n  \"characters\": [\n    { \"true_name\": \"本当の名前(一貫したIDとして使用)\", \"is_name_known_to_player\": trueかfalse(劇中で名前が判明しているか), \"name\": \"trueなら本名を、falseなら『黒服の男』などの外見的特徴を出力\", \"gender\": \"male または female または unknown\", \"info\": \"現在主人公が知っている範囲での印象や基本設定\" }\n  ]\n}\n```）";
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。このシナリオの主人公（プレイヤー自身）と、ここまでに登場した人物の基本情報を以下のJSON形式のみで出力せよ。※システムプロンプトの「設定ファイル」にある裏設定や真相を先回りして書くことは【重大なルール違反】です。必ず【これまでのチャット履歴で主人公が実際に知り得た情報のみ】で構成すること。\n\n【名前の出力ルール】\n1. 苗字のみ、あるいは名前のみしか明かされていない場合、`name` には【その判明している部分のみ】を出力してください。\n2. フルネームを出力して良いのは、姓名の両方が明示的に明かされた場合のみです。\n3. 正体が不明な場合は『黒服の男』などの外観的特徴を `name` に出力してください。\n4. 【重要】`true_name` は、正体が不明な段階であっても、設定ファイルに基づいた【一貫した本名（ID）】を必ず使用してください。これにより、表示名が変わっても同一人物として管理されます。\n\n```json\n{\n  \"characters\": [\n    { \"true_name\": \"本当の名前(一貫したIDとして使用)\", \"is_name_known_to_player\": trueかfalse, \"name\": \"上記のルールに従った表示名\", \"gender\": \"male/female/unknown\", \"info\": \"既知の情報\" }\n  ]\n}\n```）";
     } else if (commandType === 'facts') {
       triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公が把握している確定的な事実を以下のJSON形式のみで出力せよ。※「設定ファイル」に記載されている真相や裏設定は絶対に反映させず、必ず【これまでのチャット履歴で主人公が実際に体験・確認した事実のみ】を抽出すること。先回りしたネタバレ記述は厳禁。\n```json\n{\n  \"facts\": [\"事実1\", \"事実2\"]\n}\n```）";
     } else if (commandType === 'mysteries') {
       triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公がまだ解決できていない未解決の謎（解くべき課題）を以下のJSON形式のみで出力せよ。※「設定ファイル」にある真相を先回りして謎の形式で提示（例：主人公がまだ知らないトリックの核心を疑問形にする等）することは【重大な違反（ネタバレ）】です。必ず【これまでのチャット履歴のみ】から、今の主人公が純粋に不思議に思っている事だけを抽出すること。\n```json\n{\n  \"mysteries\": [\"謎1\", \"謎2\"]\n}\n```）";
     } else if (commandType === 'monologue') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。これまでの展開を踏まえ、現在の主人公の心境、疑念、あるいは決意を、まるでミステリー小説の幕間のモノローグ（地の文）のように文学的でドラマチックに出力せよ。※「設定ファイル」の真相に引張られて、主人公が知り得ないメタ的な推論をさせないこと。必ずチャット履歴の範囲内での主観視点で、感情豊かに記述すること。\n出力は以下のJSON形式のみとし、改行を入れる場合は必ず `\\n` を使って表現すること。\n```json\n{\n  \"monologue\": \"小説のモノローグのような地の文...\\n\\n（改行を含む）...\"\n}\n```）";
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。これまでの展開を踏まえ、現在の主人公の心境、疑念、あるいは決意を、まるでミステリー小説の幕間のモノローグ（地の文）のように文学的でドラマチックに出力せよ。※「設定ファイル」の真相に引張られて、主人公が知り得ないメタ的な推論をさせないこと。必ずチャット履歴の範囲内での主観視点で、感情豊かに記述すること。一人称（俺、僕、私など）は文脈にそろえること。\n出力は以下のJSON形式のみとし、改行を入れる場合は必ず `\\n` を使って表現すること。\n```json\n{\n  \"monologue\": \"小説のモノローグのような地の文...\\n\\n（改行を含む）...\"\n}\n```）";
+    } else if (commandType === 'map') {
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公が把握している地図情報を以下のJSON形式のみで出力せよ。※「設定ファイル」にある真相を先回りして書くことは【重大なルール違反】です。必ず【これまでのチャット履歴のみ】から、今の主人公が知っている場所の繋がりをgraph JSONで抽出し、現在の立ち位置（レイヤー名、ノードID）を正確に示してください。ノードIDは英数字とアンダースコア中心の安全な識別子にし、表示名は label へ入れてください。\n```json\n{\n  \"map\": {\n    \"currentPos\": {\"nodeId\": \"home\", \"layer\": \"全体マップ\"},\n    \"layers\": {\n      \"全体マップ\": {\n        \"direction\": \"LR\",\n        \"nodes\": [\n          { \"id\": \"home\", \"label\": \"自宅\", \"kind\": \"place\", \"status\": \"visited\" },\n          { \"id\": \"main_road\", \"label\": \"県道\", \"kind\": \"route\", \"status\": \"known\" },\n          { \"id\": \"library\", \"label\": \"図書館\", \"kind\": \"place\", \"status\": \"known\" }\n        ],\n        \"edges\": [\n          { \"id\": \"edge_1\", \"source\": \"home\", \"target\": \"main_road\", \"kind\": \"path\", \"bidirectional\": true },\n          { \"id\": \"edge_2\", \"source\": \"main_road\", \"target\": \"library\", \"kind\": \"path\", \"bidirectional\": true }\n        ]\n      }\n    }\n  }\n}\n```）";
     }
 
     // GMルールから削った「システムコマンドはルールを無視してJSONのみ返せ」という厳格な指示を、この瞬間の最後尾だけに動的に結合させる
@@ -714,7 +999,7 @@ export default function ChatNoir() {
           apiKey: apiKey,
           model: selectedModel,
           messages: apiMessages,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText,
+          systemInstruction: gmRuleText + "\n\n" + scenarioText + (mapFileText ? "\n\n【初期マップ設定】\n" + mapFileText : "") + "\n\n" + MAP_INSTRUCTION,
           fallbackEnabled,
           scenarioMeta
         })
@@ -734,19 +1019,35 @@ export default function ChatNoir() {
             setCharactersData(prev => {
               const updated = [...prev];
               parsed.characters.forEach((c: any) => {
-                // true_nameが一致するか、またはnameが一致するかで同一人物を判定
-                const idx = updated.findIndex(old => 
-                  (old.true_name && c.true_name && old.true_name === c.true_name) || old.name === c.name
-                );
+                const newTrueName = (c.true_name || '').replace(/\s+/g, '');
+                const newDisplayName = (c.name || '').replace(/\s+/g, '');
+
+                const idx = updated.findIndex(old => {
+                  const oldTrueName = (old.true_name || '').replace(/\s+/g, '');
+                  const oldDisplayName = (old.name || '').replace(/\s+/g, '');
+                  if (newTrueName && oldTrueName && newTrueName === oldTrueName) return true;
+                  if (newDisplayName && oldDisplayName && newDisplayName === oldDisplayName) return true;
+                  return false;
+                });
+
                 if (idx !== -1) {
-                  // すでに存在する人物は情報をマージ（画像等は維持）
                   updated[idx] = { ...updated[idx], ...c, isGenerating: false };
                 } else {
-                  // 新しい人物はリストの末尾に追加
                   updated.push({ ...c, image: null, isGenerating: false });
                 }
               });
-              return updated;
+
+              // 重複掃除
+              const unique: any[] = [];
+              const seen = new Set<string>();
+              updated.forEach(item => {
+                const id = (item.true_name || item.name || '').replace(/\s+/g, '');
+                if (!seen.has(id)) {
+                  seen.add(id);
+                  unique.push(item);
+                }
+              });
+              return unique;
             });
             showToast("人物情報を更新しました");
           } else if (commandType === 'facts' && parsed.facts) {
@@ -758,6 +1059,15 @@ export default function ChatNoir() {
           } else if (commandType === 'monologue' && parsed.monologue) {
             setMonologueData(prev => [...prev, parsed.monologue]);
             showToast("モノローグを更新しました");
+          } else if (commandType === 'map' && parsed.map) {
+            const parsedMapState = normalizeMapPayload(parsed.map);
+            if (parsedMapState) {
+              applyMapState(parsedMapState, 'merge');
+              if (parsedMapState.currentPos) {
+                showToast(`MAP: ${parsedMapState.currentPos.layer} へ移動しました`);
+              }
+              showToast("地図情報を更新しました");
+            }
           }
         } else {
           console.error("JSON形式ではありませんでした:", data.text);
@@ -778,6 +1088,7 @@ export default function ChatNoir() {
       alert(msg);
     } finally {
       setIsLoading(false);
+      setIsSidebarUpdating(false);
     }
   };
 
@@ -834,6 +1145,145 @@ export default function ChatNoir() {
     showToast(`${characterName}の画像を削除しました`);
   };
 
+  const getVisibleStoryMessages = (sourceMessages: any[]) => {
+    return sourceMessages.filter((msg, index) => {
+      if (index === 0 || index === 2) return false;
+      if (msg.isGm || msg.isHidden) return false;
+      return Boolean(msg.parts?.[0]?.text);
+    });
+  };
+
+  const buildSupportContext = () => {
+    const visibleMessages = getVisibleStoryMessages(messages);
+    const gmMessages = messages.filter((msg) => msg.isGm && msg.parts?.[0]?.text);
+    const protagonistName = scenarioMeta.protagonistName?.trim();
+    const openMysteries = mysteriesData.length > 0
+      ? mysteriesData.map((mystery) => `- ${mystery}`).join('\n')
+      : '- まだ整理されていない';
+    const recentTranscript = visibleMessages.length > 0
+      ? visibleMessages.map((msg) => `${msg.role === 'user' ? '主人公' : '本編'}: ${msg.parts[0].text}`).join('\n\n')
+      : 'まだ本編ログはありません。';
+    const gmTranscript = gmMessages.length > 0
+      ? gmMessages.map((msg) => `${msg.role === 'user' ? '主人公からGMへの質問' : 'GMの回答'}: ${msg.parts[0].text.replace(/^※GMへ：\n/, '')}`).join('\n\n')
+      : '';
+
+    return [
+      '【プレイヤーが既に知っている情報】',
+      scenarioTitle ? `シナリオ名: ${scenarioTitle}` : '',
+      protagonistName ? `主人公 = プレイヤー = ${protagonistName}` : '主人公 = プレイヤー',
+      `未解決の謎:\n${openMysteries}`,
+      `直近の公開ログ:\n${recentTranscript}`,
+      gmTranscript ? `GMとのやりとり:\n${gmTranscript}` : '',
+      'この範囲を超える情報は知らない前提で、ネタバレなしに助言してください。'
+    ].filter(Boolean).join('\n\n');
+  };
+
+  const buildSupportHistoryMessages = () => {
+    const supportConversationHistory = supportMessages
+      .filter((message) => message.kind !== 'selected-suggestion')
+      .filter((message) => Boolean(message.parts?.[0]?.text));
+
+    if (supportConversationHistory.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        role: 'user',
+        parts: [{
+          text: '【これまでのおたすけロアちゃんとの相談履歴】\n以下は過去の相談履歴です。user ロールは主人公からの相談、model ロールはロアの過去の回答です。履歴は参考情報として扱い、直前のロアの回答をそのまま繰り返さず、必要なら差分を加えて答えてください。'
+        }]
+      },
+      ...supportConversationHistory,
+    ];
+  };
+
+  const applySupportSuggestion = (suggestion: string) => {
+    setInputText(suggestion);
+    showToast('提案文を入力欄へ入れました');
+  };
+
+  const openSupportModal = () => {
+    setIsSupportSidebarOpen(false);
+    setIsSupportModalOpen(true);
+  };
+
+  const closeSupportPanels = () => {
+    setIsSupportModalOpen(false);
+    setIsSupportSidebarOpen(false);
+  };
+
+  const sendSupportMessage = async (overrideText?: string) => {
+    const textToSend = overrideText !== undefined ? overrideText : supportInputText;
+    if (!textToSend.trim() || isSupportLoading) return;
+
+    const newUserMessage = { role: 'user', parts: [{ text: textToSend }] };
+    const newHistory = [...supportMessages, newUserMessage];
+    const supportContextMessage = { role: 'user', parts: [{ text: buildSupportContext() }] };
+    const supportHistoryMessages = buildSupportHistoryMessages();
+    const latestSupportRequestMessage = { role: 'user', parts: [{ text: `【今回の最新相談】\n${textToSend}` }] };
+    const supportInstruction = [
+      supportPersonaPrompt || 'あなたはプレイヤー支援AIです。プレイヤーが既に知っている情報だけを使い、ネタバレなしで次の入力候補を提案してください。',
+      '過去のロアの回答をそのまま繰り返さず、現在の相談に合わせて必要な差分や更新を加えてください。'
+    ].join('\n\n');
+    setSupportMessages(newHistory);
+    setSupportScrollTarget(`support-message-${newHistory.length - 1}`);
+
+    if (overrideText === undefined) {
+      setSupportInputText('');
+    }
+
+    setIsSupportLoading(true);
+    supportAbortControllerRef.current = new AbortController();
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: supportAbortControllerRef.current.signal,
+        body: JSON.stringify({
+          apiKey,
+          model: selectedModel,
+          messages: [
+            supportContextMessage,
+            ...supportHistoryMessages,
+            latestSupportRequestMessage,
+          ],
+          systemInstruction: supportInstruction,
+          fallbackEnabled,
+          assistantMode: 'support',
+        })
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        const nextMessages = [...newHistory, { role: 'model', parts: [{ text: data.text || '' }] }];
+        setSupportMessages(nextMessages);
+        setSupportSuggestions(Array.isArray(data.suggestions) ? data.suggestions.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 3) : []);
+        setSupportScrollTarget(`support-message-${nextMessages.length - 1}`);
+      } else {
+        const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+        alert('サポートAIの応答に失敗しました: ' + errorStr);
+        setSupportMessages(supportMessages);
+        if (overrideText === undefined) {
+          setSupportInputText(textToSend);
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error(err);
+        alert('サポートAIとの通信に失敗しました。');
+      }
+      setSupportMessages(supportMessages);
+      if (overrideText === undefined) {
+        setSupportInputText(textToSend);
+      }
+    } finally {
+      setIsSupportLoading(false);
+      supportAbortControllerRef.current = null;
+    }
+  };
+
   // --- セーブ・ロード機能 ---
   const handleDownloadPlayLog = () => {
     let logText = `# ${scenarioTitle} - プレイログ\n\n`;
@@ -864,8 +1314,9 @@ export default function ChatNoir() {
   const handleSaveData = () => {
     try {
       const saveData = {
-        gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, scenarioTitle, endingPhase, reviewMessages
+        gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey,
+        charactersData, factsData, mysteriesData, monologueData, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, scenarioTitle, endingPhase, reviewMessages, supportMessages, supportSuggestions, supportPersonaPath,
+        mapLayers, currentPos
       };
 
       const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
@@ -959,9 +1410,12 @@ export default function ChatNoir() {
           apiKey: apiKey,
           model: selectedModel,
           messages: newHistory,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText,
+          systemInstruction: isGm
+            ? gmRuleText + "\n\n" + scenarioText + "\n\n【GM質問モード】\nあなたはこのシナリオのGMとして、プレイヤーからのメタな質問・相談に答えます。現在の本編を続けて描写してはいけません。scene_blocks 形式の出力や小説本文の続きではなく、質問への回答だけを簡潔に返してください。位置・時刻のステータス行も不要です。"
+            : gmRuleText + "\n\n" + scenarioText + "\n\n" + MAP_INSTRUCTION,
           fallbackEnabled,
-          scenarioMeta
+          scenarioMeta,
+          assistantMode: isGm ? 'gm' : undefined,
         })
       });
       const data = await res.json();
@@ -1122,6 +1576,126 @@ export default function ChatNoir() {
     });
   }, [messages, isVertical]);
 
+  // サイドバーのどこかが更新中かどうかの判定
+  const isAnySidebarUpdating = useMemo(() => {
+    return isSidebarUpdating || charactersData.some(c => c.isGenerating);
+  }, [isSidebarUpdating, charactersData]);
+
+  const renderSupportPanel = (variant: 'modal' | 'sidebar') => {
+    const isSidebarVariant = variant === 'sidebar';
+    const supportHistoryEntries = supportMessages.map((message, index) => ({ message, index }));
+    const visibleSupportMessages = supportHistoryEntries.filter(({ message }) => message.kind !== 'selected-suggestion');
+
+    return (
+      <div
+        className="fade-in"
+        style={{
+          width: isSidebarVariant ? `${leftSidebarWidth}px` : 'min(720px, 100%)',
+          height: isSidebarVariant ? '100%' : 'min(90vh, 820px)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1rem',
+          padding: isSidebarVariant ? '1.5rem' : '2rem',
+          flexShrink: 0,
+          background: 'var(--sidebar-bg)',
+          border: isSidebarVariant ? 'none' : '1px solid var(--border-color)',
+          borderRadius: isSidebarVariant ? '0' : '8px',
+          boxShadow: isSidebarVariant ? 'none' : '0 10px 30px rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(10px)',
+          overflow: 'hidden'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: isSidebarVariant ? '0.5rem' : '0' }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: isSidebarVariant ? '48px' : '56px', height: isSidebarVariant ? '48px' : '56px', borderRadius: '999px', objectFit: 'cover', border: '1px solid var(--border-color)' }} />
+            <div>
+              <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '2px', fontSize: isSidebarVariant ? '1.05rem' : '1.2rem' }}>おたすけロアちゃん</h3>
+            </div>
+          </div>
+          {isSidebarVariant ? (
+            <button onClick={() => setIsSupportSidebarOpen(false)} style={{ background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '0.4rem 0.9rem', letterSpacing: '1px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.78rem', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>閉じる</button>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button onClick={() => { setIsSupportModalOpen(false); setIsSupportSidebarOpen(true); }} style={{ background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '0.4rem 0.9rem', letterSpacing: '1px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.78rem', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>左で開く</button>
+              <button onClick={closeSupportPanels} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '4px' }}>
+          <div ref={supportScrollRef} style={{ flex: 1, minHeight: '180px', overflowY: 'auto', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {visibleSupportMessages.length === 0 ? (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', marginTop: '2rem', lineHeight: 1.8 }}>まだ相談はありません。<br />「今の状況で何を入力すると良さそう？」のように聞くと、ロアが候補を一緒に考えます。</p>
+            ) : (
+              visibleSupportMessages.map(({ message, index }) => (
+                <div key={index} data-support-anchor={`support-message-${index}`} style={{
+                  background: message.role === 'user' ? 'transparent' : 'var(--sidebar-bg)',
+                  border: message.role === 'user' ? 'none' : '1px solid var(--border-color)',
+                  padding: '0.8rem',
+                  borderRadius: '8px',
+                  color: message.role === 'user' ? 'var(--text-muted)' : 'var(--text-main)',
+                  fontSize: '0.9rem',
+                  whiteSpace: 'pre-wrap',
+                  lineHeight: 1.7
+                }}>
+                  {message.role === 'user' ? (
+                    <span style={{ fontWeight: 'bold' }}>あなた：<br /></span>
+                  ) : (
+                    <span style={{ fontWeight: 'bold', color: 'var(--text-main)', display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: '24px', height: '24px', borderRadius: '999px', objectFit: 'cover' }} />
+                      ロア：
+                    </span>
+                  )}
+                  <ReactMarkdown>{message.parts[0].text}</ReactMarkdown>
+                </div>
+              ))
+            )}
+            {supportSuggestions.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', background: 'rgba(0,0,0,0.08)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.9rem', flexShrink: 0 }}>
+                <p style={{ margin: 0, fontSize: '0.78rem', letterSpacing: '1px', color: 'var(--text-muted)' }}>ロアの候補</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                  {supportSuggestions.map((suggestion, index) => (
+                    <button
+                      key={`${suggestion}-${index}`}
+                      onClick={() => applySupportSuggestion(suggestion)}
+                      style={{ textAlign: 'left', background: 'var(--sidebar-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.8rem 0.9rem', cursor: 'pointer', lineHeight: 1.6, fontSize: '0.88rem' }}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {isSupportLoading && (
+              <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.9rem', textAlign: 'center' }}>ロアが次の一手を考えています……</p>
+            )}
+          </div>
+        </div>
+
+        <textarea
+          value={supportInputText}
+          onChange={e => setSupportInputText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              if (supportInputText.trim()) {
+                sendSupportMessage();
+              }
+            }
+          }}
+          style={{ width: '100%', minHeight: '72px', maxHeight: '140px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit', flexShrink: 0 }}
+          placeholder="例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて"
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: isSidebarVariant ? '1.5rem' : '0' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button onClick={() => sendSupportMessage(SUPPORT_SUGGESTION_PROMPT)} disabled={isSupportLoading} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: '4px', cursor: isSupportLoading ? 'not-allowed' : 'pointer', opacity: isSupportLoading ? 0.5 : 1, fontSize: '0.85rem' }}>ロアにおまかせ</button>
+          </div>
+          <button onClick={() => sendSupportMessage()} disabled={!supportInputText.trim() || isSupportLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: (!supportInputText.trim() || isSupportLoading) ? 'not-allowed' : 'pointer', opacity: (!supportInputText.trim() || isSupportLoading) ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
+        </div>
+      </div>
+    );
+  };
+
   if (gameState === 'WELCOME') {
     return (
       <div className={`${styles.welcomeContainer} fade-in`}>
@@ -1266,14 +1840,88 @@ export default function ChatNoir() {
               <img src="/logo.png" alt="Chat;Noir" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'contain', display: 'block', padding: '2rem' }} />
             )}
           </div>
-          {scenarioTitle && scenarioText && (
-            <h1 style={{ fontSize: '1.8rem', color: 'var(--text-main)', margin: '1rem 0 0.5rem 0', fontFamily: 'var(--font-serif)', letterSpacing: '4px', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.8rem' }}>
-              {scenarioTitle}
-            </h1>
-          )}
-          <p className={styles.subtitle}>
-            {scenarioText ? 'シナリオの準備ができました' : 'シナリオファイルをアップロードして遊ぶ'}
-          </p>
+
+          {/* シナリオライブラリ（保存済みマスターデータ + サンプル） */}
+          <div style={{ marginBottom: '2rem' }}>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.8rem', letterSpacing: '1px', fontWeight: 'bold' }}>シナリオライブラリから選ぶ</p>
+            <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px' }}>
+              {/* サンプルシナリオを先頭に追加 */}
+              {[
+                {
+                  title: '【サンプルシナリオ】歯車仕掛けの手紙',
+                  isSample: true,
+                  coverImage: '/package.png',
+                  lastUpdated: new Date(0).toISOString() // 常に一番後ろにならないよう適宜調整
+                },
+                ...masterScenarios.sort((a, b) => new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime())
+              ].map((s, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => {
+                    if (s.isSample) {
+                      loadDefaultScenario();
+                      setScenarioTitle(s.title);
+                      showToast('サンプルシナリオを読み込みました');
+                    } else {
+                      setGmRuleText(s.gmRuleText || '');
+                      setScenarioText(s.scenarioText || '');
+                      setBriefingText(s.briefingText || '');
+                      setPrologueText(s.prologueText || '');
+                      setMapFileText(s.mapFileText || '');
+                      const storedMapState = normalizeStoredMapState(s);
+                      setMapLayers(storedMapState.layers);
+                      setCurrentPos(storedMapState.currentPos || cloneDefaultCurrentPos());
+                      setActiveLayer(storedMapState.currentPos?.layer || Object.keys(storedMapState.layers)[0] || DEFAULT_MAP_LAYER_NAME);
+                      setCoverImage(s.coverImage || '');
+                      setScenarioTitle(s.title || '');
+                      setScenarioMeta(s.scenarioMeta || {});
+                      showToast(`${s.title} を読み込みました`);
+                    }
+                  }}
+                  style={{
+                    flexShrink: 0,
+                    width: '120px',
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-4px)'}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                >
+                  <div style={{ position: 'relative' }}>
+                    {s.coverImage ? (
+                      <img 
+                        src={s.coverImage} 
+                        alt={s.title} 
+                        style={{ width: '120px', height: 'auto', borderRadius: '4px', border: scenarioTitle === s.title ? '2px solid #fff' : '1px solid #333', marginBottom: '6px', boxShadow: '0 4px 10px rgba(0,0,0,0.3)' }} 
+                      />
+                    ) : (
+                      <div style={{ width: '120px', height: '160px', borderRadius: '4px', background: '#222', border: '1px solid #333', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: '#555' }}>NO IMAGE</div>
+                    )}
+                  </div>
+                  <div style={{ 
+                    fontSize: '0.7rem', 
+                    color: 'var(--text-main)', 
+                    width: '100%', 
+                    marginTop: '8px',
+                    textAlign: 'center',
+                    lineHeight: '1.2',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    wordBreak: 'break-all',
+                    letterSpacing: '0.5px'
+                  }}>
+                    {s.title}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className={styles.inputWrapper}>
             <input
               type="password"
@@ -1313,14 +1961,6 @@ export default function ChatNoir() {
                 onChange={(e) => setSaveName(e.target.value)}
               />
             </div>
-
-
-            <button
-              onClick={loadDefaultScenario}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0.8rem', background: 'transparent', color: '#111', border: '1px solid rgba(0,0,0,0.2)', borderRadius: '2px', cursor: 'pointer', fontSize: '0.8rem', transition: '0.2s', fontFamily: 'var(--font-serif)', letterSpacing: '2px' }}
-            >
-              <IconBook /> サンプルシナリオで遊ぶ
-            </button>
 
             <div style={{ textAlign: 'center', background: 'rgba(0,0,0,0.03)', padding: '1.5rem', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.1)', marginTop: '1rem', marginBottom: '2rem' }}>
               <p style={{ fontSize: '0.85rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', fontWeight: 'bold', letterSpacing: '1px' }}>
@@ -1378,6 +2018,71 @@ export default function ChatNoir() {
               <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setPrologueText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
             </div>
 
+            <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
+              <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
+                <IconMap size={14} style={{ marginRight: '4px' }} /> マップ情報
+                {mapFileText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
+              </p>
+              <input type="file" accept=".md,.txt" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = (evt) => {
+                    const text = evt.target?.result as string;
+                    setMapFileText(text);
+                    setMapFileText(text);
+
+                    const parsedMapState = parseMapState(text);
+                    if (parsedMapState) {
+                      try {
+                        applyMapState(parsedMapState);
+                        showToast('マップ情報を読み込みました');
+                      } catch (e) {
+                        console.warn('マップJSONのパースに失敗:', e);
+                      }
+                    }
+                  };
+                  reader.readAsText(file);
+                }
+              }} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+            </div>
+
+            <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
+              <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
+                <IconFile /> メタデータ
+                {scenarioMeta.title && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
+              </p>
+
+              <input type="file" accept=".md,.txt" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = (evt) => {
+                    const text = evt.target?.result as string;
+                    const metaJsonMatch = text.match(/```json\s*([\s\S]*?)```/);
+                    if (metaJsonMatch) {
+                      try {
+                        const parsed = JSON.parse(metaJsonMatch[1].trim());
+                        setScenarioMeta({
+                          title: parsed.title || undefined,
+                          protagonistName: parsed.protagonist_name || undefined,
+                          protagonistFirstPerson: parsed.protagonist_first_person || undefined,
+                        });
+                        showToast('メタデータを読み込みました');
+                      } catch (err) {
+                        alert('JSONのパースに失敗しました。形式を確認してください。');
+                      }
+                    } else {
+                      alert('ファイル内に JSON ブロック (```json ... ```) が見つかりませんでした。');
+                    }
+                  };
+                  reader.readAsText(file);
+                }
+                e.target.value = '';
+              }} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+            </div>
+
+
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)', opacity: 0.7 }}>
               <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
                 <IconFile /> GMルール
@@ -1402,6 +2107,7 @@ export default function ChatNoir() {
       </div>
     );
   }
+
 
   // --- ゲーム画面（プレイング 兼 ブリーフィング） ---
   return (
@@ -1436,6 +2142,21 @@ export default function ChatNoir() {
             margin-bottom: 0.8rem;
           }
         ` : ''}
+        @keyframes pulse {
+          0% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.5); opacity: 0.5; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .pulse {
+          animation: pulse 2s infinite ease-in-out;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in {
+          animation: fadeIn 0.4s ease-out forwards;
+        }
       ` }} />
 
       {/* UI背景（単色無地） */}
@@ -1444,8 +2165,8 @@ export default function ChatNoir() {
 
       {toastMsg && <div className={styles.toast}>{toastMsg}</div>}
 
-      {/* 感想戦（レビューUI 左サイドバー） */}
-      <aside style={{ position: 'relative', width: endingPhase === 'REVIEW' ? `${leftSidebarWidth}px` : '0px', transition: leftDragRef.current ? 'none' : 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)', overflow: 'hidden', background: 'var(--sidebar-bg)', borderRight: endingPhase === 'REVIEW' ? '1px solid var(--border-color)' : 'none', display: 'flex', flexDirection: 'column', zIndex: 10 }}>
+      {/* 感想戦 / ロア相談（左サイドバー） */}
+      <aside style={{ position: 'relative', width: (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? `${leftSidebarWidth}px` : '0px', transition: leftDragRef.current ? 'none' : 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)', overflow: 'hidden', background: 'var(--sidebar-bg)', borderRight: (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? '1px solid var(--border-color)' : 'none', display: 'flex', flexDirection: 'column', zIndex: 10 }}>
         <div
           onMouseDown={(e) => { leftDragRef.current = true; document.body.style.cursor = 'ew-resize'; document.body.style.userSelect = 'none'; }}
           style={{ position: 'absolute', top: 0, right: 0, width: '6px', height: '100%', cursor: 'ew-resize', zIndex: 100, background: 'transparent' }}
@@ -1489,6 +2210,7 @@ export default function ChatNoir() {
             </div>
           </div>
         )}
+        {endingPhase !== 'REVIEW' && isSupportSidebarOpen && renderSupportPanel('sidebar')}
       </aside>
 
       <main className={styles.mainChat}>
@@ -1602,9 +2324,19 @@ export default function ChatNoir() {
         {!isSidebarOpen && gameState === 'PLAYING' && (
           <button
             onClick={() => setIsSidebarOpen(true)}
-            style={{ position: 'fixed', top: '20px', right: '0', background: '#333', color: '#fff', padding: '10px 15px 10px 20px', borderRadius: '30px 0 0 30px', border: 'none', cursor: 'pointer', zIndex: 100, display: 'flex', alignItems: 'center', boxShadow: '-2px 2px 10px rgba(0,0,0,0.2)', fontSize: '0.8rem', letterSpacing: '1px' }}
+            style={{ position: 'fixed', top: '20px', right: '0', background: '#333', color: '#fff', padding: '14px 8px 16px 10px', borderRadius: '24px 0 0 24px', border: 'none', cursor: 'pointer', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', writingMode: 'vertical-rl', textOrientation: 'mixed', boxShadow: '-2px 2px 10px rgba(0,0,0,0.2)', fontSize: '0.8rem', letterSpacing: '1px', minHeight: '150px' }}
           >
-            <IconSidebar /> 手帳を開く
+            手帳を開く
+          </button>
+        )}
+
+        {/* フローティング「おたすけを開く」ボタン */}
+        {!isSupportSidebarOpen && !isSupportModalOpen && endingPhase !== 'REVIEW' && gameState === 'PLAYING' && (
+          <button
+            onClick={() => setIsSupportSidebarOpen(true)}
+            style={{ position: 'fixed', top: '20px', left: '0', background: '#333', color: '#fff', padding: '14px 10px 16px 8px', borderRadius: '0 24px 24px 0', border: 'none', cursor: 'pointer', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', writingMode: 'vertical-rl', textOrientation: 'mixed', boxShadow: '2px 2px 10px rgba(0,0,0,0.2)', fontSize: '0.8rem', letterSpacing: '1px', minHeight: '150px' }}
+          >
+            おたすけを開く
           </button>
         )}
 
@@ -1769,6 +2501,10 @@ export default function ChatNoir() {
               </div>
 
               <button onClick={() => insertTags('「', '」')} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer' }}>「」セリフ</button>
+              <button onClick={openSupportModal} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: '18px', height: '18px', borderRadius: '999px', objectFit: 'cover' }} />
+                ロアに相談する
+              </button>
               <button onClick={() => setIsGmModalOpen(true)} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer' }}>GMに質問する</button>
             </div>
           </div>
@@ -1855,6 +2591,12 @@ export default function ChatNoir() {
               </div>
             )}
 
+            {isSupportModalOpen && (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px' }}>
+                {renderSupportPanel('modal')}
+              </div>
+            )}
+
             <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end' }}>
               <div style={{ position: 'absolute', top: '-45px', right: '0', width: '100%', display: 'flex', gap: '5px', zIndex: 10 }}>
                 {/* 最新へ（左側） */}
@@ -1899,9 +2641,118 @@ export default function ChatNoir() {
           </div>
         </div>
       </main>
+      
+      {/* 地図モーダル */}
+      {isMapModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)' }}>
+          <div className="fade-in" style={{ background: '#fff', width: '90%', height: '90%', borderRadius: '12px', border: '1px solid rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.3)' }}>
+            {/* ヘッダー */}
+            <div style={{ padding: '1rem 2rem', borderBottom: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.02)' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#111', letterSpacing: '4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <IconMap size={24} /> MAP <BetaBadge />
+                </h2>
+                <p style={{ margin: 0, fontSize: '0.7rem', color: '#666', marginTop: '4px' }}>現在地：{currentNodeLabel || currentPos.nodeId} - レイヤー: {currentPos.layer}</p>
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <button 
+                  onClick={() => requestSpecialCommand('map')} 
+                  disabled={isLoading}
+                  style={{ background: '#111', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: '0.7rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '0.5rem', opacity: isLoading ? 0.6 : 1 }}
+                >
+                  <IconRefresh size={12} /> 更新
+                </button>
+                <button onClick={() => setIsMapModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#666', fontSize: '1.5rem', cursor: 'pointer', marginLeft: '1rem' }}>✕</button>
+              </div>
+            </div>
+
+            {/* レイヤータブ */}
+            <div style={{ display: 'flex', background: 'rgba(0,0,0,0.03)', padding: '0 2rem', borderBottom: '1px solid rgba(0,0,0,0.1)', gap: '10px', overflowX: 'auto' }}>
+              {getMapLayerNames(mapLayers).map(layerName => (
+                <button
+                  key={layerName}
+                  onClick={() => setActiveLayer(layerName)}
+                  style={{
+                    padding: '0.8rem 1.2rem',
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottom: activeLayer === layerName ? '2px solid #111' : '2px solid transparent',
+                    color: activeLayer === layerName ? '#111' : '#888',
+                    cursor: 'pointer',
+                    fontSize: '0.75rem',
+                    fontWeight: activeLayer === layerName ? 'bold' : 'normal',
+                    transition: 'all 0.2s',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  {layerName} {currentPos.layer === layerName && <span style={{ marginLeft: '4px', color: '#f59e0b' }}>●</span>}
+                </button>
+              ))}
+            </div>
+
+            {/* マップ本体（React Flow描画エリア） */}
+            <div style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#fdfdfd', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <MapFlowCanvas layer={mapLayers[activeLayer] || DEFAULT_MAP_STATE.layers[DEFAULT_MAP_LAYER_NAME]} currentNodeId={currentPos.nodeId} />
+            </div>
+
+            {/* フッター */}
+            <div style={{ padding: '0.8rem 2rem', background: 'rgba(0,0,0,0.03)', borderTop: '1px solid rgba(0,0,0,0.1)', color: '#888', fontSize: '0.7rem', display: 'flex', justifyContent: 'space-between' }}>
+              <span>表示方式：graph JSON + React Flow</span>
+              <span>ドラッグで移動、ホイールで拡大縮小、右下コントロールで全体表示</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* サイドバー（初期情報 ＋ 抽出された特殊コマンド情報） */}
-      <aside className={styles.sidebar} style={{ position: 'relative', width: (isSidebarOpen && gameState === 'PLAYING') ? `${sidebarWidth}px` : '0px', padding: 0, overflowY: 'hidden', overflowX: 'hidden', borderLeft: isSidebarOpen ? '1px solid var(--border-color)' : 'none', transition: dragRef.current ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', opacity: (isSidebarOpen && gameState === 'PLAYING') ? 1 : 0, display: 'flex', flexDirection: 'column' }}>
+      <aside 
+        className={styles.sidebar} 
+        style={{ 
+          position: 'relative', 
+          width: (isSidebarOpen && gameState === 'PLAYING') ? `${sidebarWidth}px` : '0px', 
+          padding: 0, 
+          overflowY: 'hidden', 
+          overflowX: 'hidden', 
+          borderLeft: isSidebarOpen ? '1px solid var(--border-color)' : 'none', 
+          transition: dragRef.current ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
+          opacity: (isSidebarOpen && gameState === 'PLAYING') ? (isAnySidebarUpdating ? 0.6 : 1) : 0, 
+          pointerEvents: isAnySidebarUpdating ? 'none' : 'auto',
+          display: 'flex', 
+          flexDirection: 'column' 
+        }}
+      >
+        {/* 更新中オーバーレイ（スクロールの影響を受けないよう外側に配置） */}
+        {isAnySidebarUpdating && (
+          <div style={{ 
+            position: 'absolute', 
+            top: 0, left: 0, right: 0, bottom: 0, 
+            background: 'rgba(0,0,0,0.2)', 
+            backdropFilter: 'blur(4px)',
+            zIndex: 1000, 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            pointerEvents: 'all'
+          }}>
+            <div style={{ 
+              background: 'var(--sidebar-bg)', 
+              padding: '10px 24px', 
+              borderRadius: '24px', 
+              fontSize: '0.75rem', 
+              color: 'var(--text-main)', 
+              border: '2px solid var(--border-color)',
+              boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+              letterSpacing: '2px',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px'
+            }}>
+              <IconRefresh size={14} />
+              <span>情報更新中...</span>
+            </div>
+          </div>
+        )}
 
         <div
           onMouseDown={(e) => { dragRef.current = true; document.body.style.cursor = 'ew-resize'; document.body.style.userSelect = 'none'; }}
@@ -1913,6 +2764,9 @@ export default function ChatNoir() {
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={() => toggleAllSections(true)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px' }}>一括展開</button>
             <button onClick={() => toggleAllSections(false)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px' }}>一括折りたたみ</button>
+            <button onClick={() => setIsMapModalOpen(true)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'var(--text-main)', border: 'none', borderRadius: '4px', cursor: 'pointer', color: 'var(--bg-color)', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <IconMap size={12} /> 地図
+            </button>
           </div>
           <button
             onClick={() => setIsSidebarOpen(false)}
@@ -1923,8 +2777,7 @@ export default function ChatNoir() {
         </div>
 
         {/* スクロール可能なメインコンテンツ */}
-        <div style={{ flexGrow: 1, overflowY: 'auto', padding: '2rem 2rem 4rem 2.5rem', display: 'flex', flexDirection: 'column', gap: '4rem', scrollBehavior: 'smooth' }}>
-
+        <div style={{ flexGrow: 1, overflowY: 'auto', padding: '2rem 2rem 4rem 2.5rem', display: 'flex', flexDirection: 'column', gap: '4rem', scrollBehavior: 'smooth', position: 'relative' }}>
           <div className={styles.sidebarSection} style={{ paddingRight: '0.5rem', whiteSpace: 'pre-wrap' }}>
             <h3 onClick={() => setOpenSections(prev => ({ ...prev, howTo: !prev.howTo }))} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>遊び方</span>
@@ -1935,7 +2788,6 @@ export default function ChatNoir() {
                 <ul style={{ paddingLeft: '1.2rem' }}>
                   <li style={{ marginBottom: '0.5rem' }}><strong>「」</strong>：主人公としての発言</li>
                   <li style={{ marginBottom: '0.5rem' }}><strong>自由入力</strong>：主人公としての行動</li>
-                  <li><strong>※GMへ：</strong> メタな状況確認や質問</li>
                 </ul>
               </div>
             )}
