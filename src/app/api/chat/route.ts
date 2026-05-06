@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
           },
           suggestions: {
             type: 'array',
-            description: 'このままGMや本編入力欄へ送れる具体的な入力候補。1件から3件。',
+            description: 'このままGMや本編入力欄へ送れる具体的な入力候補。1件から3件。セリフ（主人公の発言）のみ「」で囲む。行動・確認・探索など非セリフは「」を絶対に付けない。',
             items: {
               type: 'string'
             }
@@ -312,7 +312,7 @@ export async function POST(req: NextRequest) {
         // ステータスバー行の自動追加
         if (gmData.location && gmData.time) {
           const formattedTime = (gmData.time || '').replace(/:/g, '：');
-          finalMarkdown += `\n\n📍 [${gmData.location}] | 🕐 [${formattedTime}]`;
+          finalMarkdown += `\n\n📍 [${gmData.location}] 🕐 [${formattedTime}]`;
         }
 
         responseText = finalMarkdown;

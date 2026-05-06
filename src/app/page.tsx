@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useImperativeHandle } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { v4 as uuidv4 } from 'uuid';
 import '@xyflow/react/dist/style.css';
@@ -35,7 +35,101 @@ const SCENARIO_STORE = 'scenario_master';
 const IDB_KEY = 'auto_save';
 const SUPPORT_AVATAR_PATH = '/Chibi-style_close-up_face_portrait_of_an_anime_gir-1775997248547.png';
 const DEFAULT_SUPPORT_PERSONA_PATH = '/support-personas/lore-support.md';
-const SUPPORT_SUGGESTION_PROMPT = '今の状況で次にGMへ送ると良さそうな入力文を3つ提案して。探索・質問・人物確認など方向性が散るようにして、そのまま使える文面で出して。';
+const SUPPORT_SUGGESTION_PROMPT = '今の状況で次に入力すると良さそうな文を3つ提案して。';
+
+// --- Chat Input Component ---
+interface ChatInputHandle {
+  setValue: (text: string) => void;
+  appendValue: (prefix: string, suffix: string) => void;
+  focus: () => void;
+  getCurrentText: () => string;
+  clear: () => void;
+}
+
+const ChatInput = React.forwardRef<ChatInputHandle, {
+  onSend: (text: string) => void;
+  disabled: boolean;
+  className?: string;
+  style?: React.CSSProperties;
+  placeholder?: string;
+  sendTrigger?: 'enter' | 'ctrl-enter';
+}>(({ onSend, disabled, className, style, placeholder, sendTrigger = 'enter' }, ref) => {
+  const [text, setText] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const updateHeight = (el: HTMLTextAreaElement) => {
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  };
+
+  useImperativeHandle(ref, () => ({
+    setValue: (newText: string) => {
+      setText(newText);
+      setTimeout(() => { if (textareaRef.current) updateHeight(textareaRef.current); }, 0);
+    },
+    appendValue: (prefix: string, suffix: string) => {
+      setText(prev => {
+        const newText = prev + prefix + suffix;
+        setTimeout(() => {
+          if (textareaRef.current) {
+            updateHeight(textareaRef.current);
+            const pos = newText.length - suffix.length;
+            textareaRef.current.focus();
+            textareaRef.current.setSelectionRange(pos, pos);
+          }
+        }, 10);
+        return newText;
+      });
+    },
+    focus: () => textareaRef.current?.focus(),
+    getCurrentText: () => text,
+    clear: () => {
+      setText('');
+      setTimeout(() => { if (textareaRef.current) textareaRef.current.style.height = 'auto'; }, 0);
+    },
+  }));
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setText(e.target.value);
+    updateHeight(e.target);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const isEnter = e.key === 'Enter';
+    const shouldSend = sendTrigger === 'ctrl-enter'
+      ? isEnter && (e.ctrlKey || e.metaKey)
+      : isEnter && !e.shiftKey;
+    if (shouldSend) {
+      e.preventDefault();
+      if (!disabled && text.trim()) {
+        const current = text;
+        setText('');
+        setTimeout(() => { if (textareaRef.current) textareaRef.current.style.height = 'auto'; }, 0);
+        onSend(current);
+      }
+    }
+  };
+
+  return (
+    <textarea
+      ref={textareaRef}
+      className={className}
+      style={style}
+      placeholder={placeholder}
+      value={text}
+      onChange={handleChange}
+      onKeyDown={handleKeyDown}
+      disabled={disabled}
+    />
+  );
+});
+ChatInput.displayName = 'ChatInput';
+
+type SupportStorySnapshot = {
+  visibleMsgCount: number;
+  gmMsgCount: number;
+  openMysteries: string[];
+};
 
 async function getIDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -255,14 +349,16 @@ export default function ChatNoir() {
   const [currentPos, setCurrentPos] = useState<MapCurrentPos>(() => cloneDefaultCurrentPos());
   const [activeLayer, setActiveLayer] = useState(DEFAULT_MAP_LAYER_NAME);
   const [isMapModalOpen, setIsMapModalOpen] = useState(false);
+  const [isMapUpdating, setIsMapUpdating] = useState(false);
 
   // GMモーダル用
   const [isGmModalOpen, setIsGmModalOpen] = useState(false);
-  const [gmInputText, setGmInputText] = useState('');
+  const gmInputRef = useRef<ChatInputHandle>(null);
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
   const [isSupportSidebarOpen, setIsSupportSidebarOpen] = useState(false);
   const [supportInputText, setSupportInputText] = useState('');
   const [supportMessages, setSupportMessages] = useState<any[]>([]);
+  const [supportStorySnapshots, setSupportStorySnapshots] = useState<SupportStorySnapshot[]>([]);
   const [supportSuggestions, setSupportSuggestions] = useState<string[]>([]);
   const [isSupportLoading, setIsSupportLoading] = useState(false);
   const [supportScrollTarget, setSupportScrollTarget] = useState<string | null>(null);
@@ -372,14 +468,18 @@ export default function ChatNoir() {
 
   // チャットの状態管理
   const [messages, setMessages] = useState<any[]>([]);
-  const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const latestMessagesRef = useRef<any[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<ChatInputHandle>(null);
   const isInitialScrollDone = useRef(false);
   const supportScrollRef = useRef<HTMLDivElement>(null);
   const supportAbortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    latestMessagesRef.current = messages;
+  }, [messages]);
 
   // シナリオテキストから初期マップ情報を抽出
   useEffect(() => {
@@ -398,14 +498,7 @@ export default function ChatNoir() {
   }, [scenarioText, messages.length]);
 
   const insertTags = (prefix: string, suffix: string) => {
-    setInputText(prev => prev + prefix + suffix);
-    setTimeout(() => {
-      if (inputRef.current) {
-        inputRef.current.focus();
-        const pos = inputRef.current.value.length - suffix.length;
-        inputRef.current.setSelectionRange(pos, pos);
-      }
-    }, 10);
+    chatInputRef.current?.appendValue(prefix, suffix);
   };
 
   // 地図ファイル単体で読み込まれた場合のパース処理
@@ -426,8 +519,9 @@ export default function ChatNoir() {
   const resetAllState = () => {
     setMessages([]);
     setSupportMessages([]);
+    setSupportStorySnapshots([]);
     setSupportSuggestions([]);
-    setGmInputText('');
+    gmInputRef.current?.clear();
     setSupportInputText('');
     setCharactersData([]);
     setFactsData([]);
@@ -498,11 +592,14 @@ export default function ChatNoir() {
     setPlayerMemo(parsed.playerMemo || '');
     setEndingPhase(parsed.endingPhase || 'NONE');
     setReviewMessages(parsed.reviewMessages || []);
-    setGmInputText(parsed.gmInputText || '');
+    if (parsed.gmInputText) setTimeout(() => gmInputRef.current?.setValue(parsed.gmInputText), 0);
     setIsGmModalOpen(shouldOpenGmModal);
     setSupportMessages(parsed.supportMessages || []);
+    const loadedSnapshots: SupportStorySnapshot[] = (parsed.supportStorySnapshots || []).filter((s: any) => typeof s.visibleMsgCount === 'number');
+    setSupportStorySnapshots(loadedSnapshots);
     setSupportSuggestions(parsed.supportSuggestions || []);
     setSupportInputText(parsed.supportInputText || '');
+    if (parsed.fallbackEnabled !== undefined) setFallbackEnabled(parsed.fallbackEnabled);
     setIsSupportSidebarOpen(shouldOpenSupportSidebar);
     setIsSupportModalOpen(shouldOpenSupportModal);
     setSupportScrollTarget(null);
@@ -523,7 +620,7 @@ export default function ChatNoir() {
   }, [gameState, isLoaded]);
 
   useEffect(() => {
-    fetch(supportPersonaPath)
+    fetch(supportPersonaPath, { cache: 'no-store' })
       .then(r => r.text())
       .then(text => {
         setSupportPersonaPrompt(text);
@@ -583,8 +680,8 @@ export default function ChatNoir() {
     if (isLoaded && gameState !== 'WELCOME' && gameState !== 'SAVES' && gameState !== 'LOGIN') {
       const currentData = {
         gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, gmInputText, isGmModalOpen, supportMessages, supportSuggestions, supportPersonaPath, supportInputText, isSupportModalOpen, isSupportSidebarOpen,
-        mapLayers, currentPos,
+        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, supportInputText, isSupportModalOpen, isSupportSidebarOpen,
+        mapLayers, currentPos, fallbackEnabled,
         lastPlay: new Date().toISOString()
       };
 
@@ -596,7 +693,7 @@ export default function ChatNoir() {
       sessionStorage.setItem('chatnoir-current-save-key', runKey);
       saveToIDB(runKey, currentData);
     }
-  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, gmInputText, isGmModalOpen, supportMessages, supportSuggestions, supportPersonaPath, supportInputText, isSupportModalOpen, isSupportSidebarOpen, mapLayers, currentPos]);
+  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, supportInputText, isSupportModalOpen, isSupportSidebarOpen, mapLayers, currentPos, fallbackEnabled]);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -836,6 +933,10 @@ export default function ChatNoir() {
     localStorage.setItem('chatnoir_apiKey', apiKey.trim());
     // 新規ゲーム開始時に前回の派生データをクリア
     setMessages([]);
+    setSupportMessages([]);
+    setSupportStorySnapshots([]);
+    setSupportSuggestions([]);
+    setSupportInputText('');
     setCharactersData([]);
     setFactsData([]);
     setMysteriesData([]);
@@ -969,6 +1070,7 @@ export default function ChatNoir() {
     if (isLoading) return;
     setIsLoading(true);
     setIsSidebarUpdating(true);
+    if (commandType === 'map') setIsMapUpdating(true);
 
     // UI（小説空間）には出さず、APIの裏側で送るメッセージ
     let triggerText = '';
@@ -981,7 +1083,38 @@ export default function ChatNoir() {
     } else if (commandType === 'monologue') {
       triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。これまでの展開を踏まえ、現在の主人公の心境、疑念、あるいは決意を、まるでミステリー小説の幕間のモノローグ（地の文）のように文学的でドラマチックに出力せよ。※「設定ファイル」の真相に引張られて、主人公が知り得ないメタ的な推論をさせないこと。必ずチャット履歴の範囲内での主観視点で、感情豊かに記述すること。一人称（俺、僕、私など）は文脈にそろえること。\n出力は以下のJSON形式のみとし、改行を入れる場合は必ず `\\n` を使って表現すること。\n```json\n{\n  \"monologue\": \"小説のモノローグのような地の文...\\n\\n（改行を含む）...\"\n}\n```）";
     } else if (commandType === 'map') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公が把握している地図情報を以下のJSON形式のみで出力せよ。※「設定ファイル」にある真相を先回りして書くことは【重大なルール違反】です。必ず【これまでのチャット履歴のみ】から、今の主人公が知っている場所の繋がりをgraph JSONで抽出し、現在の立ち位置（レイヤー名、ノードID）を正確に示してください。ノードIDは英数字とアンダースコア中心の安全な識別子にし、表示名は label へ入れてください。\n```json\n{\n  \"map\": {\n    \"currentPos\": {\"nodeId\": \"home\", \"layer\": \"全体マップ\"},\n    \"layers\": {\n      \"全体マップ\": {\n        \"direction\": \"LR\",\n        \"nodes\": [\n          { \"id\": \"home\", \"label\": \"自宅\", \"kind\": \"place\", \"status\": \"visited\" },\n          { \"id\": \"main_road\", \"label\": \"県道\", \"kind\": \"route\", \"status\": \"known\" },\n          { \"id\": \"library\", \"label\": \"図書館\", \"kind\": \"place\", \"status\": \"known\" }\n        ],\n        \"edges\": [\n          { \"id\": \"edge_1\", \"source\": \"home\", \"target\": \"main_road\", \"kind\": \"path\", \"bidirectional\": true },\n          { \"id\": \"edge_2\", \"source\": \"main_road\", \"target\": \"library\", \"kind\": \"path\", \"bidirectional\": true }\n        ]\n      }\n    }\n  }\n}\n```）";
+      const currentMapJson = JSON.stringify({ currentPos, layers: mapLayers }, null, 2);
+      triggerText = `（システムコマンド：GMとしてではなくシステムとして応答せよ。以下に示す【現在の地図データ】を元に、最新のチャット履歴を反映して更新した地図JSONを出力せよ。
+【重要ルール】
+- 現在の地図データに存在するノードIDは、原則として変更・削除しないこと。既存のものは維持したまま、新しい場所・繋がりだけを追加すること。
+- ノードIDは英数字とアンダースコア中心の安全な識別子にし、表示名は label へ入れてください。
+- 「設定ファイル」にある真相を先回りして書くことは【重大なルール違反】です。
+- 必ず【これまでのチャット履歴のみ】から、今の主人公が知っている場所の繋がりを更新してください。
+
+【現在の地図データ】
+\`\`\`json
+${currentMapJson}
+\`\`\`
+
+出力形式（この形式のみで返せ）：
+\`\`\`json
+{
+  "map": {
+    "currentPos": {"nodeId": "home", "layer": "全体マップ"},
+    "layers": {
+      "全体マップ": {
+        "direction": "LR",
+        "nodes": [
+          { "id": "home", "label": "自宅", "kind": "place", "status": "visited" }
+        ],
+        "edges": [
+          { "id": "edge_1", "source": "home", "target": "main_road", "kind": "path", "bidirectional": true }
+        ]
+      }
+    }
+  }
+}
+\`\`\`）`;
     }
 
     // GMルールから削った「システムコマンドはルールを無視してJSONのみ返せ」という厳格な指示を、この瞬間の最後尾だけに動的に結合させる
@@ -1089,6 +1222,7 @@ export default function ChatNoir() {
     } finally {
       setIsLoading(false);
       setIsSidebarUpdating(false);
+      setIsMapUpdating(false);
     }
   };
 
@@ -1153,12 +1287,26 @@ export default function ChatNoir() {
     });
   };
 
+  const buildSupportStorySnapshot = (): SupportStorySnapshot => {
+    const sourceMessages = latestMessagesRef.current;
+    const visibleMessages = getVisibleStoryMessages(sourceMessages);
+    const gmMessages = sourceMessages.filter((msg) => msg.isGm && msg.parts?.[0]?.text);
+
+    return {
+      visibleMsgCount: visibleMessages.length,
+      gmMsgCount: gmMessages.length,
+      openMysteries: mysteriesData.filter((mystery): mystery is string => typeof mystery === 'string' && mystery.trim().length > 0),
+    };
+  };
+
   const buildSupportContext = () => {
-    const visibleMessages = getVisibleStoryMessages(messages);
-    const gmMessages = messages.filter((msg) => msg.isGm && msg.parts?.[0]?.text);
+    const sourceMessages = latestMessagesRef.current;
+    const visibleMessages = getVisibleStoryMessages(sourceMessages);
+    const gmMessages = sourceMessages.filter((msg) => msg.isGm && msg.parts?.[0]?.text);
+    const openMysteries = mysteriesData.filter((mystery): mystery is string => typeof mystery === 'string' && mystery.trim().length > 0);
     const protagonistName = scenarioMeta.protagonistName?.trim();
-    const openMysteries = mysteriesData.length > 0
-      ? mysteriesData.map((mystery) => `- ${mystery}`).join('\n')
+    const openMysteriesText = openMysteries.length > 0
+      ? openMysteries.map((mystery) => `- ${mystery}`).join('\n')
       : '- まだ整理されていない';
     const recentTranscript = visibleMessages.length > 0
       ? visibleMessages.map((msg) => `${msg.role === 'user' ? '主人公' : '本編'}: ${msg.parts[0].text}`).join('\n\n')
@@ -1171,11 +1319,52 @@ export default function ChatNoir() {
       '【プレイヤーが既に知っている情報】',
       scenarioTitle ? `シナリオ名: ${scenarioTitle}` : '',
       protagonistName ? `主人公 = プレイヤー = ${protagonistName}` : '主人公 = プレイヤー',
-      `未解決の謎:\n${openMysteries}`,
+      `未解決の謎:\n${openMysteriesText}`,
       `直近の公開ログ:\n${recentTranscript}`,
       gmTranscript ? `GMとのやりとり:\n${gmTranscript}` : '',
       'この範囲を超える情報は知らない前提で、ネタバレなしに助言してください。'
     ].filter(Boolean).join('\n\n');
+  };
+
+  const buildSupportStoryProgressMessage = (currentSnapshot: SupportStorySnapshot) => {
+    const previousSnapshot = supportStorySnapshots[supportStorySnapshots.length - 1];
+
+    if (!previousSnapshot) {
+      return null;
+    }
+
+    const sourceMessages = latestMessagesRef.current;
+    const visibleMessages = getVisibleStoryMessages(sourceMessages);
+    const gmMessages = sourceMessages.filter((msg) => msg.isGm && msg.parts?.[0]?.text);
+    const newStoryLines = visibleMessages.slice(previousSnapshot.visibleMsgCount)
+      .map((msg) => `${msg.role === 'user' ? '主人公' : '本編'}: ${msg.parts[0].text}`);
+    const newGmLines = gmMessages.slice(previousSnapshot.gmMsgCount)
+      .map((msg) => `${msg.role === 'user' ? '主人公からGMへの質問' : 'GMの回答'}: ${msg.parts[0].text.replace(/^※GMへ：\n/, '')}`);
+    const addedMysteries = currentSnapshot.openMysteries.filter((mystery) => !previousSnapshot.openMysteries.includes(mystery));
+    const removedMysteries = previousSnapshot.openMysteries.filter((mystery) => !currentSnapshot.openMysteries.includes(mystery));
+
+    return {
+      role: 'user',
+      parts: [{
+        text: [
+          '【前回相談から今回までの本編差分】',
+          '以下は、前回相談した時点から今回相談する時点までに本編で増えた情報です。',
+          newStoryLines.length > 0
+            ? `新しく増えた公開ログ:\n${newStoryLines.join('\n\n')}`
+            : '新しく増えた公開ログ: なし',
+          newGmLines.length > 0
+            ? `新しく増えたGMとのやりとり:\n${newGmLines.join('\n\n')}`
+            : '新しく増えたGMとのやりとり: なし',
+          addedMysteries.length > 0
+            ? `新しく未解決になった謎:\n${addedMysteries.map((mystery) => `- ${mystery}`).join('\n')}`
+            : '新しく未解決になった謎: なし',
+          removedMysteries.length > 0
+            ? `前回から解消・整理された謎:\n${removedMysteries.map((mystery) => `- ${mystery}`).join('\n')}`
+            : '前回から解消・整理された謎: なし',
+          '差分が少ない場合は、進展がほぼない前提で助言してください。'
+        ].join('\n\n')
+      }]
+    };
   };
 
   const buildSupportHistoryMessages = () => {
@@ -1199,7 +1388,7 @@ export default function ChatNoir() {
   };
 
   const applySupportSuggestion = (suggestion: string) => {
-    setInputText(suggestion);
+    chatInputRef.current?.setValue(suggestion);
     showToast('提案文を入力欄へ入れました');
   };
 
@@ -1219,14 +1408,20 @@ export default function ChatNoir() {
 
     const newUserMessage = { role: 'user', parts: [{ text: textToSend }] };
     const newHistory = [...supportMessages, newUserMessage];
+    const currentSupportStorySnapshot = buildSupportStorySnapshot();
+    const nextSupportStorySnapshots = [...supportStorySnapshots, currentSupportStorySnapshot];
     const supportContextMessage = { role: 'user', parts: [{ text: buildSupportContext() }] };
     const supportHistoryMessages = buildSupportHistoryMessages();
+    const supportStoryProgressMessage = buildSupportStoryProgressMessage(currentSupportStorySnapshot);
     const latestSupportRequestMessage = { role: 'user', parts: [{ text: `【今回の最新相談】\n${textToSend}` }] };
     const supportInstruction = [
       supportPersonaPrompt || 'あなたはプレイヤー支援AIです。プレイヤーが既に知っている情報だけを使い、ネタバレなしで次の入力候補を提案してください。',
-      '過去のロアの回答をそのまま繰り返さず、現在の相談に合わせて必要な差分や更新を加えてください。'
+      '過去のロアの回答をそのまま繰り返さず、現在の相談に合わせて必要な差分や更新を加えてください。',
+      '本編差分が与えられている場合は、前回相談以降に本編で何が進展したかを先に整理してから回答してください。'
     ].join('\n\n');
     setSupportMessages(newHistory);
+    setSupportSuggestions([]);
+    setSupportStorySnapshots(nextSupportStorySnapshots);
     setSupportScrollTarget(`support-message-${newHistory.length - 1}`);
 
     if (overrideText === undefined) {
@@ -1247,6 +1442,7 @@ export default function ChatNoir() {
           messages: [
             supportContextMessage,
             ...supportHistoryMessages,
+            ...(supportStoryProgressMessage ? [supportStoryProgressMessage] : []),
             latestSupportRequestMessage,
           ],
           systemInstruction: supportInstruction,
@@ -1259,12 +1455,23 @@ export default function ChatNoir() {
       if (res.ok) {
         const nextMessages = [...newHistory, { role: 'model', parts: [{ text: data.text || '' }] }];
         setSupportMessages(nextMessages);
-        setSupportSuggestions(Array.isArray(data.suggestions) ? data.suggestions.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 3) : []);
+        setSupportSuggestions(Array.isArray(data.suggestions)
+          ? data.suggestions
+              .filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
+              .map((s: string) => s
+                .replace(/\/\/\s*[a-z]?\s*/gi, '')  // //s や // などの残骸を除去
+                .replace(/^\s*[\d]+\.\s*/, '')        // 先頭の番号付きリスト「1. 」を除去
+                .trim()
+              )
+              .filter((s: string) => s.length > 0)
+              .slice(0, 3)
+          : []);
         setSupportScrollTarget(`support-message-${nextMessages.length - 1}`);
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
         alert('サポートAIの応答に失敗しました: ' + errorStr);
         setSupportMessages(supportMessages);
+        setSupportStorySnapshots(supportStorySnapshots);
         if (overrideText === undefined) {
           setSupportInputText(textToSend);
         }
@@ -1275,6 +1482,7 @@ export default function ChatNoir() {
         alert('サポートAIとの通信に失敗しました。');
       }
       setSupportMessages(supportMessages);
+      setSupportStorySnapshots(supportStorySnapshots);
       if (overrideText === undefined) {
         setSupportInputText(textToSend);
       }
@@ -1315,7 +1523,7 @@ export default function ChatNoir() {
     try {
       const saveData = {
         gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, scenarioTitle, endingPhase, reviewMessages, supportMessages, supportSuggestions, supportPersonaPath,
+        charactersData, factsData, mysteriesData, monologueData, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, scenarioTitle, endingPhase, reviewMessages, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath,
         mapLayers, currentPos
       };
 
@@ -1383,17 +1591,14 @@ export default function ChatNoir() {
 
   // --- 通常の行動入力 ---
   const sendMessage = async (overrideText?: string, isGm: boolean = false) => {
-    const textToSend = overrideText !== undefined ? overrideText : inputText;
+    const textToSend = overrideText !== undefined ? overrideText : (chatInputRef.current?.getCurrentText() ?? '');
     if (!textToSend.trim() || isLoading) return;
 
     const actualText = isGm ? `※GMへ：\n${textToSend}` : textToSend;
     const newUserMsg = { role: 'user', parts: [{ text: actualText }], isGm };
     const newHistory = [...messages, newUserMsg];
+    latestMessagesRef.current = newHistory;
     setMessages(newHistory);
-    
-    if (overrideText === undefined) {
-      setInputText('');
-    }
     
     setIsLoading(true);
     // 自分が送信した直後だけは一番下（最新の自分の入力）までスクロールさせる
@@ -1420,7 +1625,9 @@ export default function ChatNoir() {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessages([...newHistory, { role: 'model', parts: [{ text: data.text }], isGm }]);
+        const nextMessages = [...newHistory, { role: 'model', parts: [{ text: data.text }], isGm }];
+        latestMessagesRef.current = nextMessages;
+        setMessages(nextMessages);
         // エンディング判定：AIのレスポンスに【終】が含まれていたらエンディング待機状態へ
         if (data.text.includes('【終】') && endingPhase === 'NONE') {
           setEndingPhase('READY_TO_END');
@@ -1434,12 +1641,13 @@ export default function ChatNoir() {
         alert(msg);
         
         // 再送処理：履歴からユーザー発言を取り除き、入力欄に戻す
+        latestMessagesRef.current = messages;
         setMessages(messages);
         if (isGm) {
-          setGmInputText(textToSend);
+          gmInputRef.current?.setValue(textToSend);
           setIsGmModalOpen(true);
-        } else if (overrideText === undefined) {
-          setInputText(textToSend);
+        } else {
+          chatInputRef.current?.setValue(textToSend);
         }
       }
     } catch (err: any) {
@@ -1451,12 +1659,13 @@ export default function ChatNoir() {
       }
       
       // 再送処理
+      latestMessagesRef.current = messages;
       setMessages(messages);
       if (isGm) {
-        setGmInputText(textToSend);
+        gmInputRef.current?.setValue(textToSend);
         setIsGmModalOpen(true);
-      } else if (overrideText === undefined) {
-        setInputText(textToSend);
+      } else {
+        chatInputRef.current?.setValue(textToSend);
       }
     } finally {
       setIsLoading(false);
@@ -2510,23 +2719,12 @@ export default function ChatNoir() {
           </div>
 
           <div style={{ display: 'flex', gap: '1rem', width: '100%', alignItems: 'flex-end' }}>
-            <textarea
-              ref={inputRef as any}
+            <ChatInput
+              ref={chatInputRef}
               className={styles.chatInput}
               style={{ minHeight: '80px', maxHeight: '300px', flex: 1, resize: 'none', padding: '12px' }}
               placeholder="Enterで送信、Shift+Enterで改行"
-              value={inputText}
-              onChange={(e) => {
-                setInputText(e.target.value);
-                e.target.style.height = 'auto';
-                e.target.style.height = `${e.target.scrollHeight}px`;
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
+              onSend={(text) => { sendMessage(text); }}
               disabled={isLoading || gameState === 'BRIEFING'}
             />
             
@@ -2565,27 +2763,16 @@ export default function ChatNoir() {
                     )}
                   </div>
 
-                  <textarea
-                    value={gmInputText}
-                    onChange={e => setGmInputText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                        if (gmInputText.trim()) {
-                          sendMessage(gmInputText, true);
-                          setGmInputText('');
-                        }
-                      }
-                    }}
+                  <ChatInput
+                    ref={gmInputRef}
+                    sendTrigger="ctrl-enter"
+                    onSend={(text) => { sendMessage(text, true); }}
+                    disabled={isLoading}
                     style={{ width: '100%', minHeight: '80px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit' }}
                     placeholder="例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Ctrl+Enterで送信)"
                   />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                    <button onClick={() => {
-                      if (gmInputText.trim()) {
-                        sendMessage(gmInputText, true);
-                        setGmInputText('');
-                      }
-                    }} disabled={!gmInputText.trim() || isLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: (!gmInputText.trim() || isLoading) ? 'not-allowed' : 'pointer', opacity: (!gmInputText.trim() || isLoading) ? 0.5 : 1, transition: '0.2s' }}>送信する</button>
+                    <button onClick={() => { const t = gmInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { gmInputRef.current?.clear(); sendMessage(t, true); } }} disabled={isLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', opacity: isLoading ? 0.5 : 1, transition: '0.2s' }}>送信する</button>
                   </div>
                 </div>
               </div>
@@ -2631,7 +2818,7 @@ export default function ChatNoir() {
               </div>
               <button
                 className={styles.sendBtn}
-                onClick={() => sendMessage()}
+                onClick={() => { const text = chatInputRef.current?.getCurrentText() ?? ''; if (text.trim()) { chatInputRef.current?.clear(); sendMessage(text); } }}
                 disabled={isLoading || gameState === 'BRIEFING'}
                 style={{ height: '40px', padding: '0 2rem' }}
               >
@@ -2660,7 +2847,7 @@ export default function ChatNoir() {
                   disabled={isLoading}
                   style={{ background: '#111', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: '0.7rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '0.5rem', opacity: isLoading ? 0.6 : 1 }}
                 >
-                  <IconRefresh size={12} /> 更新
+                  {isMapUpdating ? <><IconRefresh size={12} /> 更新中…</> : <><IconRefresh size={12} /> 更新</>}
                 </button>
                 <button onClick={() => setIsMapModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#666', fontSize: '1.5rem', cursor: 'pointer', marginLeft: '1rem' }}>✕</button>
               </div>
@@ -2765,7 +2952,7 @@ export default function ChatNoir() {
             <button onClick={() => toggleAllSections(true)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px' }}>一括展開</button>
             <button onClick={() => toggleAllSections(false)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px' }}>一括折りたたみ</button>
             <button onClick={() => setIsMapModalOpen(true)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'var(--text-main)', border: 'none', borderRadius: '4px', cursor: 'pointer', color: 'var(--bg-color)', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <IconMap size={12} /> 地図
+              <IconMap size={12} /> {isMapUpdating ? '地図（更新中…）' : '地図'}
             </button>
           </div>
           <button
