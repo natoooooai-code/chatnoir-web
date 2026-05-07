@@ -18,18 +18,18 @@ export async function POST(req: NextRequest) {
 
     // 1. 設定ファイル（systemInstruction）＋ 会話履歴（contextText）から、該当キャラクターの外見情報を抽出する
     const extractionPrompt = `
-あなたはキャラクターデザインの専門家です。
-以下の【シナリオ設定】および【ゲーム文脈】から、「${characterName}」というキャラクターの外見情報を抽出し、画像生成AIのための英語プロンプト（カンマ区切り）を作成してください。
+以下の【シナリオ設定】と【ゲーム文脈】を読み、「${characterName}」の外見を描写した画像生成プロンプトを日本語で1〜3文で書いてください。
 
-【厳守事項】
-1. 日本語、解説、マークダウン、キャラクターの固有名詞（ローマ字含む）は一切出力しないでください。
-2. 情報が不足している場合は、名前の響きや役割から適当な外見を必ず推測・創作して補ってください。空欄は許されません。
-3. 最初に「1girl」または「1boy」または「1man」などの性別と人数のベースタグを置いてください。
-4. 次に「20s, short black hair, wearing a white shirt, serious expression」などの外見や年齢のタグを置いてください。
-5. 必ず最後に「, bust-up portrait, upper body only, anime style portrait, solid light gray background, highly detailed」を付けて出力してください。
+含めること:
+- 年齢感・性別・雰囲気（シナリオの設定通りでよい）
+- 髪型・髪色・表情
+- 服装
+- バストアップ、正面向き
+- アニメ調イラスト、シンプルな明るいグレーの背景、高精細
 
-【出力形式の例】
-1girl, 20s, long brown hair, wearing a police uniform, smiling, bust-up portrait, upper body only, anime style portrait, solid light gray background, highly detailed
+例: 20代後半の女性。茶色のロングヘアで、明るく元気な笑顔。セーラー服を着ている。バストアップ、正面向き。アニメ調イラスト、シンプルな明るいグレーの背景、高精細。
+
+情報が少ない場合は名前・役割から外見を創作して補うこと。出力はプロンプトのみ（説明不要）。未成年のキャラクターの場合、年齢に関する情報はプロンプトに含めないでください。
 
 【シナリオ設定】
 ${systemInstruction}
@@ -44,7 +44,7 @@ ${contextText || 'なし'}
       config: { temperature: 0.5 }
     });
 
-    const imagePrompt = descriptionRes.text?.trim() || `1 person, bust-up portrait, anime style portrait, solid light gray background, highly detailed`;
+    const imagePrompt = descriptionRes.text?.trim() || `人物のバストアップ、正面向き。アニメ調イラスト、シンプルな明るいグレーの背景、高精細。`;
 
     console.log(`[Avatar Gen] Extracted Prompt for ${characterName}:`, imagePrompt);
 

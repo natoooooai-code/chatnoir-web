@@ -354,9 +354,13 @@ export default function ChatNoir() {
   // GMモーダル用
   const [isGmModalOpen, setIsGmModalOpen] = useState(false);
   const gmInputRef = useRef<ChatInputHandle>(null);
+  const gmChatScrollRef = useRef<HTMLDivElement>(null);
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
   const [isSupportSidebarOpen, setIsSupportSidebarOpen] = useState(false);
-  const [supportInputText, setSupportInputText] = useState('');
+  const [isAutoSupportMode, setIsAutoSupportMode] = useState(() => {
+    try { return localStorage.getItem('chatnoir_autoSupportMode') === 'true'; } catch { return false; }
+  });
+  const supportInputRef = useRef<ChatInputHandle>(null);
   const [supportMessages, setSupportMessages] = useState<any[]>([]);
   const [supportStorySnapshots, setSupportStorySnapshots] = useState<SupportStorySnapshot[]>([]);
   const [supportSuggestions, setSupportSuggestions] = useState<string[]>([]);
@@ -403,6 +407,14 @@ export default function ChatNoir() {
   const [monologueData, setMonologueData] = useState<string[]>([]);
   const [activeCharacterOptions, setActiveCharacterOptions] = useState<string | null>(null);
   const [playerMemo, setPlayerMemo] = useState<string>('');
+
+  // ⋯メニューのクリック外閉じ
+  useEffect(() => {
+    if (!activeCharacterOptions) return;
+    const handler = () => setActiveCharacterOptions(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [activeCharacterOptions]);
 
   const [openSections, setOpenSections] = useState({ howTo: true, monologue: true, characters: true, facts: true, mysteries: true, memo: true });
 
@@ -481,6 +493,13 @@ export default function ChatNoir() {
     latestMessagesRef.current = messages;
   }, [messages]);
 
+  // GMチャット：新しいメッセージが来たら自動スクロール
+  useEffect(() => {
+    if (gmChatScrollRef.current) {
+      gmChatScrollRef.current.scrollTop = gmChatScrollRef.current.scrollHeight;
+    }
+  }, [messages.filter(m => m.isGm).length, isLoading]);
+
   // シナリオテキストから初期マップ情報を抽出
   useEffect(() => {
     // すでにメッセージが開始されている場合や、初期値以外のグラフがある場合はスキップ
@@ -522,7 +541,7 @@ export default function ChatNoir() {
     setSupportStorySnapshots([]);
     setSupportSuggestions([]);
     gmInputRef.current?.clear();
-    setSupportInputText('');
+    supportInputRef.current?.clear();
     setCharactersData([]);
     setFactsData([]);
     setMysteriesData([]);
@@ -574,7 +593,7 @@ export default function ChatNoir() {
     setMapFileText(parsed.mapFileText || '');
     setCoverImage(parsed.coverImage || '');
     if (parsed.apiKey) setApiKey(parsed.apiKey); // APIキーは未保存でも消さない
-    setCharactersData(parsed.charactersData || []);
+    setCharactersData((parsed.charactersData || []).map((c: any) => ({ ...c, isGenerating: false })));
     setFactsData(parsed.factsData || []);
     setMysteriesData(parsed.mysteriesData || []);
     setMonologueData(parsed.monologueData ? (Array.isArray(parsed.monologueData) ? parsed.monologueData : [parsed.monologueData]) : []);
@@ -598,7 +617,7 @@ export default function ChatNoir() {
     const loadedSnapshots: SupportStorySnapshot[] = (parsed.supportStorySnapshots || []).filter((s: any) => typeof s.visibleMsgCount === 'number');
     setSupportStorySnapshots(loadedSnapshots);
     setSupportSuggestions(parsed.supportSuggestions || []);
-    setSupportInputText(parsed.supportInputText || '');
+    if (parsed.supportInputText) setTimeout(() => supportInputRef.current?.setValue(parsed.supportInputText), 0);
     if (parsed.fallbackEnabled !== undefined) setFallbackEnabled(parsed.fallbackEnabled);
     setIsSupportSidebarOpen(shouldOpenSupportSidebar);
     setIsSupportModalOpen(shouldOpenSupportModal);
@@ -680,7 +699,7 @@ export default function ChatNoir() {
     if (isLoaded && gameState !== 'WELCOME' && gameState !== 'SAVES' && gameState !== 'LOGIN') {
       const currentData = {
         gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, supportInputText, isSupportModalOpen, isSupportSidebarOpen,
+        charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen,
         mapLayers, currentPos, fallbackEnabled,
         lastPlay: new Date().toISOString()
       };
@@ -693,7 +712,7 @@ export default function ChatNoir() {
       sessionStorage.setItem('chatnoir-current-save-key', runKey);
       saveToIDB(runKey, currentData);
     }
-  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, supportInputText, isSupportModalOpen, isSupportSidebarOpen, mapLayers, currentPos, fallbackEnabled]);
+  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen, mapLayers, currentPos, fallbackEnabled]);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -936,7 +955,7 @@ export default function ChatNoir() {
     setSupportMessages([]);
     setSupportStorySnapshots([]);
     setSupportSuggestions([]);
-    setSupportInputText('');
+    supportInputRef.current?.clear();
     setCharactersData([]);
     setFactsData([]);
     setMysteriesData([]);
@@ -1158,13 +1177,18 @@ ${currentMapJson}
                 const idx = updated.findIndex(old => {
                   const oldTrueName = (old.true_name || '').replace(/\s+/g, '');
                   const oldDisplayName = (old.name || '').replace(/\s+/g, '');
-                  if (newTrueName && oldTrueName && newTrueName === oldTrueName) return true;
-                  if (newDisplayName && oldDisplayName && newDisplayName === oldDisplayName) return true;
+                  // true_name が両方あれば true_name で一致判定（最優先）
+                  if (newTrueName && oldTrueName) return newTrueName === oldTrueName;
+                  // new に true_name があり old にない場合：old の displayName が new の displayName か true_name と一致するか
+                  if (newTrueName && !oldTrueName) return oldDisplayName === newDisplayName || oldDisplayName === newTrueName;
+                  // どちらも true_name がなければ displayName で判定
+                  if (!newTrueName && !oldTrueName) return newDisplayName && oldDisplayName && newDisplayName === oldDisplayName;
                   return false;
                 });
 
                 if (idx !== -1) {
-                  updated[idx] = { ...updated[idx], ...c, isGenerating: false };
+                  // 画像はユーザーが設定したものを維持する
+                  updated[idx] = { ...updated[idx], ...c, image: updated[idx].image, isGenerating: false };
                 } else {
                   updated.push({ ...c, image: null, isGenerating: false });
                 }
@@ -1403,7 +1427,7 @@ ${currentMapJson}
   };
 
   const sendSupportMessage = async (overrideText?: string) => {
-    const textToSend = overrideText !== undefined ? overrideText : supportInputText;
+    const textToSend = overrideText !== undefined ? overrideText : (supportInputRef.current?.getCurrentText() ?? '');
     if (!textToSend.trim() || isSupportLoading) return;
 
     const newUserMessage = { role: 'user', parts: [{ text: textToSend }] };
@@ -1425,7 +1449,7 @@ ${currentMapJson}
     setSupportScrollTarget(`support-message-${newHistory.length - 1}`);
 
     if (overrideText === undefined) {
-      setSupportInputText('');
+      supportInputRef.current?.clear();
     }
 
     setIsSupportLoading(true);
@@ -1473,7 +1497,7 @@ ${currentMapJson}
         setSupportMessages(supportMessages);
         setSupportStorySnapshots(supportStorySnapshots);
         if (overrideText === undefined) {
-          setSupportInputText(textToSend);
+          supportInputRef.current?.setValue(textToSend);
         }
       }
     } catch (err: any) {
@@ -1484,7 +1508,7 @@ ${currentMapJson}
       setSupportMessages(supportMessages);
       setSupportStorySnapshots(supportStorySnapshots);
       if (overrideText === undefined) {
-        setSupportInputText(textToSend);
+        supportInputRef.current?.setValue(textToSend);
       }
     } finally {
       setIsSupportLoading(false);
@@ -1631,6 +1655,10 @@ ${currentMapJson}
         // エンディング判定：AIのレスポンスに【終】が含まれていたらエンディング待機状態へ
         if (data.text.includes('【終】') && endingPhase === 'NONE') {
           setEndingPhase('READY_TO_END');
+        }
+        // 自動おたすけモード：本編（非GM）の応答後にロアにおまかせを自動起動
+        if (isAutoSupportMode && !isGm) {
+          sendSupportMessage(SUPPORT_SUGGESTION_PROMPT);
         }
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
@@ -1881,25 +1909,27 @@ ${currentMapJson}
           </div>
         </div>
 
-        <textarea
-          value={supportInputText}
-          onChange={e => setSupportInputText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              if (supportInputText.trim()) {
-                sendSupportMessage();
-              }
-            }
-          }}
+        <ChatInput
+          ref={supportInputRef}
+          onSend={() => sendSupportMessage()}
+          disabled={isSupportLoading}
           style={{ width: '100%', minHeight: '72px', maxHeight: '140px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit', flexShrink: 0 }}
           placeholder="例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて"
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: isSidebarVariant ? '1.5rem' : '0' }}>
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <button onClick={() => sendSupportMessage(SUPPORT_SUGGESTION_PROMPT)} disabled={isSupportLoading} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: '4px', cursor: isSupportLoading ? 'not-allowed' : 'pointer', opacity: isSupportLoading ? 0.5 : 1, fontSize: '0.85rem' }}>ロアにおまかせ</button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.75rem', color: isAutoSupportMode ? 'var(--text-main)' : 'var(--text-muted)', userSelect: 'none' }} title="本編が更新されるたびに自動でロアにおまかせを実行します">
+              <div
+                onClick={() => setIsAutoSupportMode(v => { const next = !v; try { localStorage.setItem('chatnoir_autoSupportMode', String(next)); } catch {} return next; })}
+                style={{ width: '32px', height: '18px', borderRadius: '9px', background: isAutoSupportMode ? 'var(--text-main)' : 'var(--border-color)', position: 'relative', transition: '0.2s', flexShrink: 0, cursor: 'pointer' }}
+              >
+                <div style={{ position: 'absolute', top: '3px', left: isAutoSupportMode ? '17px' : '3px', width: '12px', height: '12px', borderRadius: '50%', background: isAutoSupportMode ? 'var(--bg-color)' : 'var(--text-muted)', transition: '0.2s' }} />
+              </div>
+              自動
+            </label>
           </div>
-          <button onClick={() => sendSupportMessage()} disabled={!supportInputText.trim() || isSupportLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: (!supportInputText.trim() || isSupportLoading) ? 'not-allowed' : 'pointer', opacity: (!supportInputText.trim() || isSupportLoading) ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
+          <button onClick={() => { const t = supportInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { supportInputRef.current?.clear(); sendSupportMessage(t); } }} disabled={isSupportLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isSupportLoading ? 'not-allowed' : 'pointer', opacity: isSupportLoading ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
         </div>
       </div>
     );
@@ -2406,11 +2436,12 @@ ${currentMapJson}
                 value={reviewInputText}
                 onChange={e => setReviewInputText(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
                     sendReviewMessage();
                   }
                 }}
-                placeholder="GMに質問する... (Ctrl+Enterで送信)"
+                placeholder="GMに質問する... (Enterで送信、Shift+Enterで改行)"
                 style={{ width: '100%', background: 'var(--chat-input-bg)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '0.8rem', borderRadius: '4px', minHeight: '60px', fontFamily: 'inherit', resize: 'vertical', fontSize: '0.9rem' }}
               />
               <button onClick={() => sendReviewMessage()} disabled={isLoading || !reviewInputText.trim()} style={{ width: '100%', background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.8rem', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', letterSpacing: '2px', opacity: (isLoading || !reviewInputText.trim()) ? 0.5 : 1, fontSize: '0.9rem' }}>
@@ -2741,7 +2772,7 @@ ${currentMapJson}
                   </div>
                   
                   {/* GMチャット履歴表示エリア */}
-                  <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem', minHeight: '200px' }}>
+                  <div ref={gmChatScrollRef} style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem', minHeight: '200px' }}>
                     {messages.filter(m => m.isGm).length === 0 ? (
                        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', marginTop: '2rem' }}>まだGMとのやりとりはありません</p>
                     ) : (
@@ -2765,11 +2796,10 @@ ${currentMapJson}
 
                   <ChatInput
                     ref={gmInputRef}
-                    sendTrigger="ctrl-enter"
                     onSend={(text) => { sendMessage(text, true); }}
                     disabled={isLoading}
                     style={{ width: '100%', minHeight: '80px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit' }}
-                    placeholder="例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Ctrl+Enterで送信)"
+                    placeholder="例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Enterで送信、改行はShift+Enter)"
                   />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                     <button onClick={() => { const t = gmInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { gmInputRef.current?.clear(); sendMessage(t, true); } }} disabled={isLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', opacity: isLoading ? 0.5 : 1, transition: '0.2s' }}>送信する</button>
@@ -2965,52 +2995,34 @@ ${currentMapJson}
 
         {/* スクロール可能なメインコンテンツ */}
         <div style={{ flexGrow: 1, overflowY: 'auto', padding: '2rem 2rem 4rem 2.5rem', display: 'flex', flexDirection: 'column', gap: '4rem', scrollBehavior: 'smooth', position: 'relative' }}>
-          <div className={styles.sidebarSection} style={{ paddingRight: '0.5rem', whiteSpace: 'pre-wrap' }}>
-            <h3 onClick={() => setOpenSections(prev => ({ ...prev, howTo: !prev.howTo }))} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>遊び方</span>
-              <span style={{ fontSize: '0.7rem', color: '#999' }}>{openSections.howTo ? '▲' : '▼'}</span>
-            </h3>
-            {openSections.howTo && (
-              <div style={{ color: 'var(--text-main)', fontSize: '0.85rem', lineHeight: '1.8', margin: '1rem 0' }}>
-                <ul style={{ paddingLeft: '1.2rem' }}>
-                  <li style={{ marginBottom: '0.5rem' }}><strong>「」</strong>：主人公としての発言</li>
-                  <li style={{ marginBottom: '0.5rem' }}><strong>自由入力</strong>：主人公としての行動</li>
-                </ul>
-              </div>
-            )}
-          </div>
-
-          {/* モノローグ情報 */}
+          {/* プレイヤーメモ */}
           <div className={styles.sidebarSection}>
             <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span onClick={() => setOpenSections(prev => ({ ...prev, monologue: !prev.monologue }))} style={{ cursor: 'pointer', flex: 1 }}>主人公の独白</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button
-                  onClick={(e) => { e.stopPropagation(); requestSpecialCommand('monologue'); }}
-                  disabled={isLoading}
-                  style={{ fontSize: '0.65rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}
-                >
-                  <IconRefresh /> 更新
-                </button>
-                <span onClick={() => setOpenSections(prev => ({ ...prev, monologue: !prev.monologue }))} style={{ fontSize: '0.7rem', color: '#999', cursor: 'pointer' }}>{openSections.monologue ? '▲' : '▼'}</span>
-              </div>
+              <span onClick={() => setOpenSections(prev => ({ ...prev, memo: !prev.memo }))} style={{ cursor: 'pointer', flex: 1 }}>メモ</span>
+              <span onClick={() => setOpenSections(prev => ({ ...prev, memo: !prev.memo }))} style={{ fontSize: '0.7rem', color: '#999', cursor: 'pointer' }}>{openSections.memo ? '▲' : '▼'}</span>
             </h3>
-            {openSections.monologue && (
+            {openSections.memo && (
               <div style={{ margin: '1rem 0' }}>
-                {monologueData.length === 0 ? (
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>まだ独白はありません</p>
-                ) : (
-                  monologueData.map((text, i) => (
-                    <details key={i} open={i === monologueData.length - 1} style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.8rem' }}>
-                      <summary style={{ cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', outline: 'none' }}>
-                        独白 #{i + 1} {i === monologueData.length - 1 ? '(最新)' : ''}
-                      </summary>
-                      <p style={{ fontFamily: 'var(--app-font)', fontSize: '0.85rem', fontStyle: 'italic', lineHeight: '1.8', color: 'var(--text-main)', paddingLeft: '1rem', borderLeft: '2px solid var(--border-color)', whiteSpace: 'pre-wrap' }}>
-                        「 {text} 」
-                      </p>
-                    </details>
-                  ))
-                )}
+                <textarea
+                  value={playerMemo}
+                  onChange={(e) => setPlayerMemo(e.target.value)}
+                  placeholder="気になったことや推理をここに書き留めておきましょう..."
+                  style={{
+                    width: '100%',
+                    minHeight: '120px',
+                    padding: '10px 12px',
+                    fontFamily: 'var(--app-font)',
+                    fontSize: '0.85rem',
+                    lineHeight: '1.8',
+                    color: 'var(--text-main)',
+                    background: theme === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '4px',
+                    resize: 'vertical',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
               </div>
             )}
           </div>
@@ -3036,9 +3048,9 @@ ${currentMapJson}
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: '1rem 0' }}>まだ判明している人物はいません</p>
                 ) : (
                   charactersData.map((c, i) => {
-                    const isFemale = c.gender === 'female' || (!c.gender && /女|少女|娘|婦|嬢|姉|妹|彼女|妻|母|ヒロイン/g.test(c.info + c.name));
+                    const isFemale = c.gender === 'female' || (!c.gender && /女|少女|娘|婦|嬢|姉|妹|彼女|妻|母|ヒロイン/.test(c.info + c.name));
                     return (
-                      <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', fontFamily: 'var(--font-serif)', marginBottom: '1.5rem' }}>
+                      <li key={c.true_name || c.name} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', fontFamily: 'var(--font-serif)', marginBottom: '1.5rem' }}>
 
                         {/* 左：画像・メニュー列 */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '96px', flexShrink: 0 }}>
@@ -3066,7 +3078,7 @@ ${currentMapJson}
                           {!c.isGenerating && (
                             <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
                               <button
-                                onClick={() => setActiveCharacterOptions(activeCharacterOptions === c.name ? null : c.name)}
+                                onClick={(e) => { e.stopPropagation(); setActiveCharacterOptions(activeCharacterOptions === c.name ? null : c.name); }}
                                 style={{ fontSize: '1.2rem', lineHeight: '10px', padding: '2px 8px', background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}
                               >
                                 ⋯
@@ -3079,12 +3091,6 @@ ${currentMapJson}
                                   >
                                     プロンプト生成
                                   </button>
-                                  <label
-                                    htmlFor={`file-${i}`}
-                                    style={{ fontSize: '0.6rem', padding: '4px', background: '#eab308', color: '#fff', border: 'none', borderRadius: '2px', cursor: 'pointer', textAlign: 'center', margin: 0 }}
-                                  >
-                                    画像アップ
-                                  </label>
                                   {c.image && (
                                     <button
                                       onClick={() => { handleDeleteImage(c.name); setActiveCharacterOptions(null); }}
@@ -3184,34 +3190,52 @@ ${currentMapJson}
             )}
           </div>
 
-          {/* プレイヤーメモ */}
+          {/* モノローグ情報 */}
           <div className={styles.sidebarSection}>
             <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span onClick={() => setOpenSections(prev => ({ ...prev, memo: !prev.memo }))} style={{ cursor: 'pointer', flex: 1 }}>メモ</span>
-              <span onClick={() => setOpenSections(prev => ({ ...prev, memo: !prev.memo }))} style={{ fontSize: '0.7rem', color: '#999', cursor: 'pointer' }}>{openSections.memo ? '▲' : '▼'}</span>
+              <span onClick={() => setOpenSections(prev => ({ ...prev, monologue: !prev.monologue }))} style={{ cursor: 'pointer', flex: 1 }}>主人公の独白</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); requestSpecialCommand('monologue'); }}
+                  disabled={isLoading}
+                  style={{ fontSize: '0.65rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}
+                >
+                  <IconRefresh /> 更新
+                </button>
+                <span onClick={() => setOpenSections(prev => ({ ...prev, monologue: !prev.monologue }))} style={{ fontSize: '0.7rem', color: '#999', cursor: 'pointer' }}>{openSections.monologue ? '▲' : '▼'}</span>
+              </div>
             </h3>
-            {openSections.memo && (
+            {openSections.monologue && (
               <div style={{ margin: '1rem 0' }}>
-                <textarea
-                  value={playerMemo}
-                  onChange={(e) => setPlayerMemo(e.target.value)}
-                  placeholder="気になったことや推理をここに書き留めておきましょう..."
-                  style={{
-                    width: '100%',
-                    minHeight: '120px',
-                    padding: '10px 12px',
-                    fontFamily: 'var(--app-font)',
-                    fontSize: '0.85rem',
-                    lineHeight: '1.8',
-                    color: 'var(--text-main)',
-                    background: theme === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '4px',
-                    resize: 'vertical',
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                  }}
-                />
+                {monologueData.length === 0 ? (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>まだ独白はありません</p>
+                ) : (
+                  monologueData.map((text, i) => (
+                    <details key={i} open={i === monologueData.length - 1} style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.8rem' }}>
+                      <summary style={{ cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', outline: 'none' }}>
+                        独白 #{i + 1} {i === monologueData.length - 1 ? '(最新)' : ''}
+                      </summary>
+                      <p style={{ fontFamily: 'var(--app-font)', fontSize: '0.85rem', fontStyle: 'italic', lineHeight: '1.8', color: 'var(--text-main)', paddingLeft: '1rem', borderLeft: '2px solid var(--border-color)', whiteSpace: 'pre-wrap' }}>
+                        「 {text} 」
+                      </p>
+                    </details>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className={styles.sidebarSection} style={{ paddingRight: '0.5rem', whiteSpace: 'pre-wrap' }}>
+            <h3 onClick={() => setOpenSections(prev => ({ ...prev, howTo: !prev.howTo }))} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>遊び方</span>
+              <span style={{ fontSize: '0.7rem', color: '#999' }}>{openSections.howTo ? '▲' : '▼'}</span>
+            </h3>
+            {openSections.howTo && (
+              <div style={{ color: 'var(--text-main)', fontSize: '0.85rem', lineHeight: '1.8', margin: '1rem 0' }}>
+                <ul style={{ paddingLeft: '1.2rem' }}>
+                  <li style={{ marginBottom: '0.5rem' }}><strong>「」</strong>：主人公としての発言</li>
+                  <li style={{ marginBottom: '0.5rem' }}><strong>自由入力</strong>：主人公としての行動</li>
+                </ul>
               </div>
             )}
           </div>
