@@ -49,50 +49,71 @@ const getNodeColors = (node: GraphMapNode, isCurrent: boolean) => {
 
 const buildLevels = (layer: GraphMapLayer) => {
   const indegree = new Map<string, number>();
-  const adjacency = new Map<string, string[]>();
+  const adjacency = new Map<string, Set<string>>();
 
   layer.nodes.forEach((node) => {
     indegree.set(node.id, 0);
-    adjacency.set(node.id, []);
+    adjacency.set(node.id, new Set());
   });
 
   layer.edges.forEach((edge) => {
     if (!adjacency.has(edge.source) || !adjacency.has(edge.target)) return;
-    adjacency.get(edge.source)?.push(edge.target);
+    adjacency.get(edge.source)?.add(edge.target);
+    adjacency.get(edge.target)?.add(edge.source);
     indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
 
     if (edge.bidirectional) {
-      adjacency.get(edge.target)?.push(edge.source);
       indegree.set(edge.source, (indegree.get(edge.source) || 0) + 1);
     }
   });
 
-  const queue = layer.nodes.filter((node) => (indegree.get(node.id) || 0) === 0).map((node) => node.id);
   const levelMap = new Map<string, number>();
   const visited = new Set<string>();
+  let componentBaseLevel = 0;
 
-  queue.forEach((nodeId) => levelMap.set(nodeId, 0));
+  const traverseComponent = (startNodeId: string) => {
+    if (visited.has(startNodeId)) return;
 
-  while (queue.length > 0) {
-    const nodeId = queue.shift()!;
-    if (visited.has(nodeId)) continue;
-    visited.add(nodeId);
+    const queue: Array<{ nodeId: string; level: number }> = [{ nodeId: startNodeId, level: componentBaseLevel }];
+    visited.add(startNodeId);
+    levelMap.set(startNodeId, componentBaseLevel);
 
-    const nextLevel = (levelMap.get(nodeId) || 0) + 1;
-    adjacency.get(nodeId)?.forEach((targetId) => {
-      if (!levelMap.has(targetId) || (levelMap.get(targetId) || 0) < nextLevel) {
+    let componentMaxLevel = componentBaseLevel;
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current) break;
+
+      componentMaxLevel = Math.max(componentMaxLevel, current.level);
+
+      for (const targetId of adjacency.get(current.nodeId) || []) {
+        if (visited.has(targetId)) continue;
+
+        const nextLevel = current.level + 1;
+        visited.add(targetId);
         levelMap.set(targetId, nextLevel);
+        componentMaxLevel = Math.max(componentMaxLevel, nextLevel);
+        queue.push({ nodeId: targetId, level: nextLevel });
       }
-      queue.push(targetId);
-    });
+    }
+
+    componentBaseLevel = componentMaxLevel + 2;
+  };
+
+  const rootNodeIds = layer.nodes
+    .filter((node) => (indegree.get(node.id) || 0) === 0)
+    .map((node) => node.id);
+
+  if (rootNodeIds.length === 0 && layer.nodes[0]) {
+    rootNodeIds.push(layer.nodes[0].id);
   }
 
-  let fallbackLevel = Math.max(0, ...Array.from(levelMap.values()));
+  rootNodeIds.forEach((nodeId) => {
+    traverseComponent(nodeId);
+  });
+
   layer.nodes.forEach((node) => {
-    if (!levelMap.has(node.id)) {
-      fallbackLevel += 1;
-      levelMap.set(node.id, fallbackLevel);
-    }
+    traverseComponent(node.id);
   });
 
   return levelMap;

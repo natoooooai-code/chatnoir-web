@@ -1,6 +1,13 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
 
+interface ChatMessage {
+  role?: string;
+  parts?: Array<{ text?: string }>;
+}
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : 'Internal Server Error';
+
 export async function POST(req: NextRequest) {
   try {
     const { apiKey, characterName, systemInstruction, messages } = await req.json();
@@ -13,7 +20,7 @@ export async function POST(req: NextRequest) {
 
     // 文脈（これまでの会話）を文字列化
     const contextText = Array.isArray(messages) 
-      ? messages.map((m: any) => `${m.role === 'user' ? 'Player' : 'GM'}: ${m.parts?.[0]?.text || ''}`).join('\n')
+      ? (messages as ChatMessage[]).map((message) => `${message.role === 'user' ? 'Player' : 'GM'}: ${message.parts?.[0]?.text || ''}`).join('\n')
       : '';
 
     // 1. 設定ファイル（systemInstruction）＋ 会話履歴（contextText）から、該当キャラクターの外見情報を抽出する
@@ -50,8 +57,8 @@ ${contextText || 'なし'}
 
     return NextResponse.json({ prompt: imagePrompt });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Prompt Generation Error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
 }

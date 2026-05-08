@@ -1,6 +1,20 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
 
+interface ChatMessage {
+  role?: string;
+  parts?: Array<{ text?: string }>;
+}
+
+interface GeneratedImagePart {
+  inlineData?: {
+    mimeType?: string;
+    data?: string;
+  };
+}
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : 'Internal Server Error';
+
 export async function POST(req: NextRequest) {
   try {
     const { apiKey, characterName, systemInstruction, messages } = await req.json();
@@ -13,7 +27,7 @@ export async function POST(req: NextRequest) {
 
     // 会話の文脈を文字列化
     const contextText = Array.isArray(messages)
-      ? messages.map((m: any) => `${m.role === 'user' ? 'Player' : 'GM'}: ${m.parts?.[0]?.text || ''}`).join('\n')
+      ? (messages as ChatMessage[]).map((message) => `${message.role === 'user' ? 'Player' : 'GM'}: ${message.parts?.[0]?.text || ''}`).join('\n')
       : '';
 
     // Step 1: キャラクター情報から画像生成プロンプトを生成（日本語）
@@ -60,8 +74,8 @@ ${contextText || 'なし'}
     });
 
     // 画像パーツを取得
-    const parts = imageRes.candidates?.[0]?.content?.parts;
-    const imagePart = parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+    const parts = imageRes.candidates?.[0]?.content?.parts as GeneratedImagePart[] | undefined;
+    const imagePart = parts?.find((part) => part.inlineData?.mimeType?.startsWith('image/'));
 
     if (!imagePart?.inlineData) {
       return NextResponse.json({ error: 'No image generated. The model may not have produced an image.' }, { status: 500 });
@@ -71,8 +85,8 @@ ${contextText || 'なし'}
 
     return NextResponse.json({ image: base64Image, prompt: imagePrompt });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Image Generation Error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
 }

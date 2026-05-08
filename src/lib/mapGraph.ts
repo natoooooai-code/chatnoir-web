@@ -39,6 +39,8 @@ export interface GraphMapState {
   currentPos?: MapCurrentPos;
 }
 
+type UnknownRecord = Record<string, unknown>;
+
 interface LegacyMapLocation {
   id: string;
   layer?: string;
@@ -49,6 +51,56 @@ interface LegacyMapLocation {
   status?: MapNodeStatus;
   type?: string;
 }
+
+const isRecord = (value: unknown): value is UnknownRecord => typeof value === 'object' && value !== null;
+
+const getString = (record: UnknownRecord, key: string): string | undefined => {
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+};
+
+const getTrimmedString = (record: UnknownRecord, key: string): string | undefined => {
+  const value = getString(record, key)?.trim();
+  return value ? value : undefined;
+};
+
+const getNumber = (record: UnknownRecord, key: string): number | undefined => {
+  const value = record[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+};
+
+const getRecord = (record: UnknownRecord, key: string): UnknownRecord | undefined => {
+  const value = record[key];
+  return isRecord(value) ? value : undefined;
+};
+
+const normalizeLegacyLocation = (rawLocation: unknown): LegacyMapLocation | null => {
+  if (!isRecord(rawLocation)) return null;
+
+  const id = getTrimmedString(rawLocation, 'id');
+  const name = getTrimmedString(rawLocation, 'name');
+  const x = getNumber(rawLocation, 'x');
+  const y = getNumber(rawLocation, 'y');
+  const rawStatus = rawLocation['status'];
+
+  if (!id || !name || x === undefined || y === undefined) return null;
+
+  return {
+    id,
+    layer: getTrimmedString(rawLocation, 'layer'),
+    x,
+    y,
+    name,
+    description: getString(rawLocation, 'description'),
+    status: rawStatus === 'unknown' || rawStatus === 'known' || rawStatus === 'visited' ? rawStatus : undefined,
+    type: getString(rawLocation, 'type')
+  };
+};
 
 export const DEFAULT_MAP_LAYER_NAME = '全体マップ';
 
@@ -76,94 +128,87 @@ const normalizeDirection = (rawDirection: unknown): MapDirection => {
 };
 
 const normalizeCurrentPos = (rawCurrentPos: unknown): MapCurrentPos | undefined => {
-  if (!rawCurrentPos || typeof rawCurrentPos !== 'object') return undefined;
+  if (!isRecord(rawCurrentPos)) return undefined;
 
-  const nodeId = typeof (rawCurrentPos as any).nodeId === 'string' ? (rawCurrentPos as any).nodeId.trim() : '';
+  const nodeId = getTrimmedString(rawCurrentPos, 'nodeId') || '';
   if (!nodeId) return undefined;
 
   return {
     nodeId,
-    layer: typeof (rawCurrentPos as any).layer === 'string' && (rawCurrentPos as any).layer.trim()
-      ? (rawCurrentPos as any).layer.trim()
-      : DEFAULT_MAP_LAYER_NAME
+    layer: getTrimmedString(rawCurrentPos, 'layer') || DEFAULT_MAP_LAYER_NAME
   };
 };
 
 const normalizeNode = (rawNode: unknown, index: number): GraphMapNode | null => {
-  if (!rawNode || typeof rawNode !== 'object') return null;
+  if (!isRecord(rawNode)) return null;
 
-  const id = typeof (rawNode as any).id === 'string' ? (rawNode as any).id.trim() : '';
+  const id = getTrimmedString(rawNode, 'id') || '';
   if (!id) return null;
 
-  const label = typeof (rawNode as any).label === 'string' && (rawNode as any).label.trim()
-    ? (rawNode as any).label.trim()
-    : typeof (rawNode as any).name === 'string' && (rawNode as any).name.trim()
-      ? (rawNode as any).name.trim()
-      : id;
+  const label = getTrimmedString(rawNode, 'label') || getTrimmedString(rawNode, 'name') || id;
 
-  const position = typeof (rawNode as any).position === 'object' && (rawNode as any).position
+  const rawPosition = getRecord(rawNode, 'position');
+  const position = rawPosition
     ? {
-        x: Number((rawNode as any).position.x) || 0,
-        y: Number((rawNode as any).position.y) || 0
+        x: getNumber(rawPosition, 'x') || 0,
+        y: getNumber(rawPosition, 'y') || 0
       }
     : undefined;
+
+  const rawStatus = rawNode['status'];
 
   return {
     id,
     label,
-    kind: typeof (rawNode as any).kind === 'string' ? (rawNode as any).kind : typeof (rawNode as any).type === 'string' ? (rawNode as any).type : 'place',
-    description: typeof (rawNode as any).description === 'string' ? (rawNode as any).description : undefined,
-    status: (rawNode as any).status === 'unknown' || (rawNode as any).status === 'known' || (rawNode as any).status === 'visited'
-      ? (rawNode as any).status
+    kind: getString(rawNode, 'kind') || getString(rawNode, 'type') || 'place',
+    description: getString(rawNode, 'description'),
+    status: rawStatus === 'unknown' || rawStatus === 'known' || rawStatus === 'visited'
+      ? rawStatus
       : index === 0 ? 'visited' : 'known',
     position
   };
 };
 
 const normalizeEdge = (rawEdge: unknown, index: number): GraphMapEdge | null => {
-  if (!rawEdge || typeof rawEdge !== 'object') return null;
+  if (!isRecord(rawEdge)) return null;
 
-  const source = typeof (rawEdge as any).source === 'string'
-    ? (rawEdge as any).source.trim()
-    : typeof (rawEdge as any).from === 'string'
-      ? (rawEdge as any).from.trim()
-      : '';
-  const target = typeof (rawEdge as any).target === 'string'
-    ? (rawEdge as any).target.trim()
-    : typeof (rawEdge as any).to === 'string'
-      ? (rawEdge as any).to.trim()
-      : '';
+  const source = getTrimmedString(rawEdge, 'source') || getTrimmedString(rawEdge, 'from') || '';
+  const target = getTrimmedString(rawEdge, 'target') || getTrimmedString(rawEdge, 'to') || '';
 
   if (!source || !target) return null;
 
   return {
-    id: typeof (rawEdge as any).id === 'string' && (rawEdge as any).id.trim() ? (rawEdge as any).id.trim() : `edge_${index}_${source}_${target}`,
+    id: getTrimmedString(rawEdge, 'id') || `edge_${index}_${source}_${target}`,
     source,
     target,
-    label: typeof (rawEdge as any).label === 'string' ? (rawEdge as any).label : undefined,
-    kind: typeof (rawEdge as any).kind === 'string' ? (rawEdge as any).kind : 'path',
-    bidirectional: Boolean((rawEdge as any).bidirectional)
+    label: getString(rawEdge, 'label'),
+    kind: getString(rawEdge, 'kind') || 'path',
+    bidirectional: Boolean(rawEdge['bidirectional'])
   };
 };
 
 const normalizeLayer = (rawLayer: unknown): GraphMapLayer | null => {
-  if (!rawLayer || typeof rawLayer !== 'object') return null;
+  if (!isRecord(rawLayer)) return null;
 
-  const nodes = Array.isArray((rawLayer as any).nodes)
-    ? (rawLayer as any).nodes.map((node: unknown, index: number) => normalizeNode(node, index)).filter(Boolean) as GraphMapNode[]
+  const rawNodes = rawLayer['nodes'];
+  const nodes = Array.isArray(rawNodes)
+    ? rawNodes
+        .map((node: unknown, index: number) => normalizeNode(node, index))
+        .filter((node): node is GraphMapNode => Boolean(node))
     : [];
 
   if (nodes.length === 0) return null;
 
   const nodeIdSet = new Set(nodes.map((node) => node.id));
-  const edges = Array.isArray((rawLayer as any).edges)
-    ? (rawLayer as any).edges
+  const rawEdges = rawLayer['edges'];
+  const edges = Array.isArray(rawEdges)
+    ? rawEdges
         .map((edge: unknown, index: number) => normalizeEdge(edge, index))
         .filter((edge: GraphMapEdge | null): edge is GraphMapEdge => Boolean(edge && nodeIdSet.has(edge.source) && nodeIdSet.has(edge.target)))
     : [];
 
   return {
-    direction: normalizeDirection((rawLayer as any).direction),
+    direction: normalizeDirection(rawLayer['direction']),
     nodes,
     edges
   };
@@ -294,12 +339,15 @@ const buildLegacyLocationMap = (locations: LegacyMapLocation[], currentPos?: Map
   return { layers, currentPos };
 };
 
-export const normalizeMapPayload = (mapPayload: any): GraphMapState | null => {
-  const currentPos = normalizeCurrentPos(mapPayload.currentPos);
+export const normalizeMapPayload = (mapPayload: unknown): GraphMapState | null => {
+  if (!isRecord(mapPayload)) return null;
 
-  if (mapPayload.layers && typeof mapPayload.layers === 'object' && !Array.isArray(mapPayload.layers)) {
+  const currentPos = normalizeCurrentPos(mapPayload['currentPos']);
+
+  const rawLayers = mapPayload['layers'];
+  if (isRecord(rawLayers) && !Array.isArray(rawLayers)) {
     const layers = Object.fromEntries(
-      Object.entries(mapPayload.layers)
+      Object.entries(rawLayers)
         .map(([layerName, rawLayer]) => [layerName, normalizeLayer(rawLayer)] as const)
         .filter((entry): entry is [string, GraphMapLayer] => Boolean(entry[1]))
     );
@@ -309,8 +357,8 @@ export const normalizeMapPayload = (mapPayload: any): GraphMapState | null => {
     }
   }
 
-  if (Array.isArray(mapPayload.nodes)) {
-    const layerName = currentPos?.layer || (typeof mapPayload.layer === 'string' && mapPayload.layer.trim() ? mapPayload.layer.trim() : DEFAULT_MAP_LAYER_NAME);
+  if (Array.isArray(mapPayload['nodes'])) {
+    const layerName = currentPos?.layer || getTrimmedString(mapPayload, 'layer') || DEFAULT_MAP_LAYER_NAME;
     const layer = normalizeLayer(mapPayload);
     if (layer) {
       return {
@@ -322,9 +370,10 @@ export const normalizeMapPayload = (mapPayload: any): GraphMapState | null => {
     }
   }
 
-  if (typeof mapPayload.mermaid === 'string' && mapPayload.mermaid.trim()) {
+  const mermaid = getTrimmedString(mapPayload, 'mermaid');
+  if (mermaid) {
     const layerName = currentPos?.layer || DEFAULT_MAP_LAYER_NAME;
-    const layer = parseMermaidLayer(mapPayload.mermaid);
+    const layer = parseMermaidLayer(mermaid);
     if (layer) {
       return {
         currentPos,
@@ -335,8 +384,15 @@ export const normalizeMapPayload = (mapPayload: any): GraphMapState | null => {
     }
   }
 
-  if (Array.isArray(mapPayload.locations) && mapPayload.locations.length > 0) {
-    return buildLegacyLocationMap(mapPayload.locations as LegacyMapLocation[], currentPos);
+  const rawLocations = mapPayload['locations'];
+  if (Array.isArray(rawLocations) && rawLocations.length > 0) {
+    const locations = rawLocations
+      .map((location) => normalizeLegacyLocation(location))
+      .filter((location): location is LegacyMapLocation => Boolean(location));
+
+    if (locations.length > 0) {
+      return buildLegacyLocationMap(locations, currentPos);
+    }
   }
 
   return null;
@@ -351,35 +407,36 @@ export const parseMapState = (text: string): GraphMapState | null => {
     jsonContent = jsonContent.substring(firstBrace);
   }
 
-  const parsed = JSON.parse(jsonContent);
-  const mapPayload = parsed.map && typeof parsed.map === 'object' ? parsed.map : parsed;
+  const parsed = JSON.parse(jsonContent) as unknown;
+  const mapPayload = isRecord(parsed) && isRecord(parsed['map']) ? parsed['map'] : parsed;
   return normalizeMapPayload(mapPayload);
 };
 
-export const normalizeStoredMapState = (raw: any): GraphMapState => {
+export const normalizeStoredMapState = (raw: unknown): GraphMapState => {
   const fallback = structuredClone(DEFAULT_MAP_STATE);
 
-  if (!raw || typeof raw !== 'object') {
+  if (!isRecord(raw)) {
     return fallback;
   }
 
-  if (raw.mapLayers) {
-    const normalized = normalizeMapPayload({ layers: raw.mapLayers, currentPos: raw.currentPos });
+  if (raw['mapLayers']) {
+    const normalized = normalizeMapPayload({ layers: raw['mapLayers'], currentPos: raw['currentPos'] });
     if (normalized) {
       return normalized;
     }
   }
 
-  if (raw.mapGraphs && typeof raw.mapGraphs === 'object') {
+  const rawMapGraphs = raw['mapGraphs'];
+  if (isRecord(rawMapGraphs)) {
     const legacyLayers = Object.fromEntries(
-      Object.entries(raw.mapGraphs)
+      Object.entries(rawMapGraphs)
         .map(([layerName, mermaid]) => [layerName, typeof mermaid === 'string' ? parseMermaidLayer(mermaid) : null] as const)
         .filter((entry): entry is [string, GraphMapLayer] => Boolean(entry[1]))
     );
 
     if (Object.keys(legacyLayers).length > 0) {
       return {
-        currentPos: normalizeCurrentPos(raw.currentPos) || fallback.currentPos,
+        currentPos: normalizeCurrentPos(raw['currentPos']) || fallback.currentPos,
         layers: legacyLayers
       };
     }

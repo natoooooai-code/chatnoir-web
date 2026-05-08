@@ -2,6 +2,132 @@ import { GoogleGenAI } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
 import { getValidationPrompt } from './validatorPrompt';
 
+type UnknownRecord = Record<string, unknown>;
+
+interface ChatMessagePart {
+  text?: string;
+}
+
+interface ChatMessage {
+  role?: string;
+  parts?: ChatMessagePart[];
+}
+
+interface ScenarioMeta {
+  protagonistName?: string;
+  protagonistFirstPerson?: string;
+}
+
+interface SupportPayload {
+  reply?: string;
+  suggestions?: string[];
+}
+
+interface GmSceneBlock {
+  type?: string;
+  speaker_true_name?: string;
+  is_name_known_to_player?: boolean;
+  speaker_display_name?: string;
+  text?: string;
+}
+
+interface GmPayload {
+  thought_process?: string;
+  scene_blocks: GmSceneBlock[];
+  location?: string;
+  time?: string;
+}
+
+const isRecord = (value: unknown): value is UnknownRecord => typeof value === 'object' && value !== null;
+
+const getString = (record: UnknownRecord, key: string): string | undefined => {
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+};
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  if (isRecord(error) && typeof error['message'] === 'string') return error['message'];
+  return 'Internal Server Error';
+};
+
+const isRetriableError = (error: unknown) => {
+  const message = getErrorMessage(error);
+  return message.includes('500')
+    || message.includes('INTERNAL')
+    || message.includes('503')
+    || message.includes('429')
+    || message.includes('UNAVAILABLE')
+    || message.includes('TIMEOUT')
+    || message.includes('timeout')
+    || message.includes('fetch failed');
+};
+
+const normalizeMessages = (rawMessages: unknown): ChatMessage[] => {
+  if (!Array.isArray(rawMessages)) return [];
+
+  return rawMessages
+    .filter((message): message is UnknownRecord => isRecord(message))
+    .map((message) => ({
+      role: getString(message, 'role'),
+      parts: Array.isArray(message['parts'])
+        ? message['parts']
+            .filter((part): part is UnknownRecord => isRecord(part))
+            .map((part) => ({ text: getString(part, 'text') }))
+        : []
+    }));
+};
+
+const normalizeScenarioMeta = (rawScenarioMeta: unknown): ScenarioMeta => {
+  if (!isRecord(rawScenarioMeta)) return {};
+
+  return {
+    protagonistName: getString(rawScenarioMeta, 'protagonistName'),
+    protagonistFirstPerson: getString(rawScenarioMeta, 'protagonistFirstPerson')
+  };
+};
+
+const normalizeSupportPayload = (rawPayload: unknown): SupportPayload => {
+  if (!isRecord(rawPayload)) return {};
+
+  const rawSuggestions = rawPayload['suggestions'];
+  return {
+    reply: getString(rawPayload, 'reply'),
+    suggestions: Array.isArray(rawSuggestions)
+      ? rawSuggestions.filter((suggestion): suggestion is string => typeof suggestion === 'string')
+      : undefined
+  };
+};
+
+const normalizeGmSceneBlock = (rawBlock: unknown): GmSceneBlock | null => {
+  if (!isRecord(rawBlock)) return null;
+
+  return {
+    type: getString(rawBlock, 'type'),
+    speaker_true_name: getString(rawBlock, 'speaker_true_name'),
+    is_name_known_to_player: typeof rawBlock['is_name_known_to_player'] === 'boolean' ? rawBlock['is_name_known_to_player'] : undefined,
+    speaker_display_name: getString(rawBlock, 'speaker_display_name'),
+    text: getString(rawBlock, 'text')
+  };
+};
+
+const normalizeGmPayload = (rawPayload: unknown): GmPayload => {
+  if (!isRecord(rawPayload)) {
+    return { scene_blocks: [] };
+  }
+
+  const rawBlocks = rawPayload['scene_blocks'];
+  return {
+    thought_process: getString(rawPayload, 'thought_process'),
+    scene_blocks: Array.isArray(rawBlocks)
+      ? rawBlocks
+          .map((block) => normalizeGmSceneBlock(block))
+          .filter((block): block is GmSceneBlock => Boolean(block))
+      : [],
+    location: getString(rawPayload, 'location'),
+    time: getString(rawPayload, 'time')
+  };
+};
 // フォールバックチェーン（性能が高い順）
 const FALLBACK_CHAIN = [
   'gemma-4-31b-it',
@@ -11,7 +137,19 @@ const FALLBACK_CHAIN = [
 
 export async function POST(req: NextRequest) {
   try {
-    const { apiKey, messages, systemInstruction, model, isReviewMode, fallbackEnabled, scenarioMeta, assistantMode } = await req.json();
+    const body = await req.json() as unknown;
+    if (!isRecord(body)) {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
+
+    const apiKey = getString(body, 'apiKey');
+    const messages = normalizeMessages(body['messages']);
+    const systemInstruction = getString(body, 'systemInstruction');
+    const model = getString(body, 'model');
+    const isReviewMode = body['isReviewMode'] === true;
+    const fallbackEnabled = body['fallbackEnabled'] === true;
+    const scenarioMeta = normalizeScenarioMeta(body['scenarioMeta']);
+    const assistantMode = getString(body, 'assistantMode');
 
     if (!apiKey) {
       return NextResponse.json({ error: 'API key is required' }, { status: 400 });
@@ -34,20 +172,19 @@ export async function POST(req: NextRequest) {
     const modelsToTry = getModelsToTry(requestedModel, !!fallbackEnabled);
 
     // 指数バックオフ付きのリトライ関数
-    const fetchWithRetry = async (fn: () => Promise<any>, maxRetries = 3) => {
-      let lastError: any;
+    const fetchWithRetry = async <T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> => {
+      let lastError: unknown;
       for (let i = 0; i < maxRetries; i++) {
         try {
           // 60秒のタイムアウトを設定
-          const timeoutPromise = new Promise((_, reject) =>
+          const timeoutPromise = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error('TIMEOUT: AI response took too long')), 60000)
           );
           return await Promise.race([fn(), timeoutPromise]);
-        } catch (error: any) {
+        } catch (error: unknown) {
           lastError = error;
           // 429 (Rate Limit) / 500 (Internal) / 503 (Overloaded) / Timeout / fetch failed はリトライ対象
-          const isRetriable = error.message?.includes('500') || error.message?.includes('INTERNAL') || error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE') || error.message?.includes('TIMEOUT') || error.message?.includes('timeout') || error.message?.includes('fetch failed');
-          if (isRetriable && i < maxRetries - 1) {
+          if (isRetriableError(error) && i < maxRetries - 1) {
             const waitTime = Math.pow(2, i) * 1000 + Math.random() * 500;
             console.warn(`[Gemini API] 負荷過多または制限を検知 (${i + 1}/${maxRetries})。${waitTime}ms 後に再試行します...`);
             await new Promise(resolve => setTimeout(resolve, waitTime));
@@ -56,12 +193,12 @@ export async function POST(req: NextRequest) {
           throw error;
         }
       }
-      throw lastError;
+      throw lastError instanceof Error ? lastError : new Error('Request failed');
     };
 
     // フォールバック付きのモデル生成ラッパー
-    const generateWithFallback = async (fn: (model: string) => Promise<any>, overrideModelsToTry?: string[]): Promise<{ result: any, usedModel: string }> => {
-      let lastError: any;
+    const generateWithFallback = async <T>(fn: (model: string) => Promise<T>, overrideModelsToTry?: string[]): Promise<{ result: T, usedModel: string }> => {
+      let lastError: unknown;
       const models = overrideModelsToTry || modelsToTry;
       for (const m of models) {
         try {
@@ -70,9 +207,8 @@ export async function POST(req: NextRequest) {
             console.info(`✅ [フォールバック成功] ${overrideModelsToTry ? overrideModelsToTry[0] : requestedModel} → ${m}`);
           }
           return { result, usedModel: m };
-        } catch (error: any) {
-          const isRetriable = error.message?.includes('500') || error.message?.includes('INTERNAL') || error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE') || error.message?.includes('TIMEOUT') || error.message?.includes('timeout') || error.message?.includes('fetch failed');
-          if (isRetriable && !!fallbackEnabled) {
+        } catch (error: unknown) {
+          if (isRetriableError(error) && !!fallbackEnabled) {
             console.warn(`[Fallback] ${m} が利用不可。次のモデルを試みます...`);
             lastError = error;
             continue;
@@ -80,7 +216,7 @@ export async function POST(req: NextRequest) {
           throw error;
         }
       }
-      throw lastError;
+      throw lastError instanceof Error ? lastError : new Error('Fallback failed');
     };
 
     // 【1回目】通常の文章生成
@@ -112,13 +248,13 @@ export async function POST(req: NextRequest) {
           systemInstruction: systemInstruction || 'あなたはプレイヤー支援AIです。',
           temperature: 0.6,
           responseMimeType: 'application/json',
-          responseSchema: supportSchema as any,
+          responseSchema: supportSchema,
         }
       }));
 
-      let supportPayload: { reply?: string; suggestions?: string[] } = {};
+      let supportPayload: SupportPayload = {};
       try {
-        supportPayload = JSON.parse(response.text || '{}');
+        supportPayload = normalizeSupportPayload(JSON.parse(response.text || '{}') as unknown);
       } catch (error) {
         console.error('Support JSON parse error:', response.text, error);
       }
@@ -192,15 +328,15 @@ export async function POST(req: NextRequest) {
             systemInstruction: retryInstruction,
             temperature: 0.7,
             responseMimeType: "application/json",
-            responseSchema: responseSchema as any
+            responseSchema
           }
         }));
         console.log(`✅ [AI生成完了] 処理時間: ${Math.round((Date.now() - t1) / 1000)}秒`);
 
-        let gmData;
+        let gmData: GmPayload;
         try {
-          gmData = JSON.parse(response.text || '{}');
-        } catch (e) {
+          gmData = normalizeGmPayload(JSON.parse(response.text || '{}') as unknown);
+        } catch {
           console.error("JSON parse error:", response.text);
           responseText = response.text || '';
           break; // パース失敗時はそのまま現状を画面に返す
@@ -225,20 +361,21 @@ export async function POST(req: NextRequest) {
         let needsAiValidation = false;
         let matchedKeyword = '';
         let matchedText = '';
-        const blocks = (gmData.scene_blocks || []) as any[];
+        const blocks = gmData.scene_blocks;
 
         for (const block of blocks) {
           if (block.type === 'narrative') {
+            const blockText = block.text || '';
             // キーワードが「主語（は・が・も）」として使われているか、または単体で存在するかを正規表現でチェック
             const found = protagonistKeywords.find(k => {
               // キーワードの直後に「は」「が」「も」が来るか、句読点や文末が来るパターン
               const regex = new RegExp(`${k}(?:は|が|も|[、。！？」\\s]|$)`);
-              return regex.test(block.text);
+              return regex.test(blockText);
             });
             if (found) {
               needsAiValidation = true;
               matchedKeyword = found;
-              matchedText = block.text;
+              matchedText = blockText;
               break;
             }
           } else if (block.type === 'dialogue') {
@@ -281,7 +418,7 @@ export async function POST(req: NextRequest) {
 
         // JSONのブロック配列をマークダウンフォーマットに結合
         if (gmData.scene_blocks && Array.isArray(gmData.scene_blocks)) {
-          finalMarkdown = gmData.scene_blocks.map((block: any) => {
+          finalMarkdown = gmData.scene_blocks.map((block) => {
             if (block.type === 'dialogue') {
               let speaker = block.speaker_display_name || block.speaker_true_name || '';
               let dialogueText = block.text || '';
@@ -341,8 +478,8 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ text: responseText || '' });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Chat API Error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
 }
