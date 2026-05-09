@@ -20,6 +20,7 @@ interface ScenarioMeta {
 
 interface SupportPayload {
   reply?: string;
+  action?: string;
   suggestions?: string[];
 }
 
@@ -93,6 +94,7 @@ const normalizeSupportPayload = (rawPayload: unknown): SupportPayload => {
   const rawSuggestions = rawPayload['suggestions'];
   return {
     reply: getString(rawPayload, 'reply'),
+    action: getString(rawPayload, 'action'),
     suggestions: Array.isArray(rawSuggestions)
       ? rawSuggestions.filter((suggestion): suggestion is string => typeof suggestion === 'string')
       : undefined
@@ -228,17 +230,21 @@ export async function POST(req: NextRequest) {
         properties: {
           reply: {
             type: 'string',
-            description: 'プレイヤーへの助言本文。親しみはありつつ簡潔にまとめる。'
+            description: 'プレイヤーへの助言本文。親しみはありつつ簡潔にまとめる。デバッグ用途では入力理由の説明を書く。'
+          },
+          action: {
+            type: 'string',
+            description: '実際に送る入力文。デバッグ用途などで必要なときに1件だけ返す。不要な場合は空文字でもよい。小説の続きを書くような地の文・行動描写のスタイルで書くこと（「〜する」という動詞だけの概要は不可）。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。'
           },
           suggestions: {
             type: 'array',
-            description: '本編入力欄にそのまま入れて使える入力文を1件から3件。小説の続きを書くような地の文・行動描写のスタイルで書くこと（「〜する」という動詞だけの概要は不可）。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。',
+            description: '本編入力欄にそのまま入れて使える入力文を0件から3件。小説の続きを書くような地の文・行動描写のスタイルで書くこと（「〜する」という動詞だけの概要は不可）。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。',
             items: {
               type: 'string'
             }
           }
         },
-        required: ['reply', 'suggestions']
+        required: ['reply', 'action']
       };
 
       const { result: response } = await generateWithFallback((m) => ai.models.generateContent({
@@ -261,6 +267,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         text: supportPayload.reply || response.text || '',
+        action: supportPayload.action || '',
         suggestions: Array.isArray(supportPayload.suggestions) ? supportPayload.suggestions.slice(0, 3) : []
       });
     }
@@ -299,8 +306,8 @@ export async function POST(req: NextRequest) {
               "properties": {
                 "type": { "type": "string", "enum": ["narrative", "dialogue"] },
                 "speaker_true_name": { "type": "string", "description": "dialogueの場合のみ。発言者の本当の名前を設定。※絶対に主人公（プレイヤー）のセリフを生成してはいけない。必ずNPCの名前になるはずである。" },
-                "is_name_known_to_player": { "type": "boolean", "description": "dialogueの場合のみ。この時点で主人公（プレイヤー）がこの人物の本名をすでに知っているか（劇中で明かされたか）。" },
-                "speaker_display_name": { "type": "string", "description": "dialogueの場合のみ。上記がtrueなら本名を、falseなら『黒服の男』などの外見的特徴を設定する。" },
+                "is_name_known_to_player": { "type": "boolean", "description": "dialogueの場合のみ。この時点で主人公（プレイヤー）がこの人物の本名をすでに知っているか。劇中で明かされた場合だけでなく、家族・同居人など主人公が開始時点から当然知っている人物なら true にしてよい。" },
+                "speaker_display_name": { "type": "string", "description": "dialogueの場合のみ。上記がtrueなら本名を設定する。falseなら主人公がその時点で知っている呼称・続柄・役職・通称を優先し、それも無い場合のみ『黒服の男』などの外見的特徴を設定する。" },
                 "text": { "type": "string", "description": "地の文、またはセリフの内容。※プレイヤーの宣言内容を繰り返したり、要約して書き始めたりしないこと。即座に「その行動の結果」や「周囲の反応」から描写を開始せよ。また、地の文には主人公の感情や、プレイヤーが入力していない行動の事後捏造を含めないこと。" }
               },
               "required": ["type", "text"]

@@ -30,6 +30,10 @@ const SCENARIO_STORE = 'scenario_master';
 const SUPPORT_AVATAR_PATH = '/Chibi-style_close-up_face_portrait_of_an_anime_gir-1775997248547.png';
 const DEFAULT_SUPPORT_PERSONA_PATH = '/support-personas/lore-support.md';
 const SUPPORT_SUGGESTION_PROMPT = '今の状況で次に入力すると良さそうな文を3つ提案して。';
+const SCENARIO_DEBUG_PROMPT = [
+  'あなたはプレイヤーの代わりに、次に送る入力を1つだけ決めてください。',
+  'まず「なぜその入力にするか」を簡潔に説明し、そのあとに実際に送る入力文を1つだけ示してください。'
+].join('\n');
 
 // --- Chat Input Component ---
 interface ChatInputHandle {
@@ -255,6 +259,12 @@ type SupportStorySnapshot = {
   openMysteries: string[];
 };
 
+type SupportResponseResult = {
+  text: string;
+  suggestions: string[];
+  action: string;
+};
+
 const DEFAULT_OPEN_SECTIONS: SidebarOpenSections = {
   howTo: true,
   monologue: true,
@@ -349,6 +359,14 @@ const toCharacterArray = (value: unknown): CharacterData[] => Array.isArray(valu
       .map((item) => normalizeCharacterData(item))
       .filter((item): item is CharacterData => Boolean(item))
   : [];
+
+const getCharacterIdentity = (character: Pick<CharacterSummary, 'true_name' | 'name'>): string => {
+  const normalizedTrueName = (character.true_name || '').replace(/\s+/g, '');
+  if (normalizedTrueName) return `true:${normalizedTrueName}`;
+
+  const normalizedDisplayName = (character.name || '').replace(/\s+/g, '');
+  return `name:${normalizedDisplayName}`;
+};
 
 const normalizeScenarioMetaData = (value: unknown): ScenarioMetaData => {
   if (!isRecord(value)) return {};
@@ -742,6 +760,7 @@ export default function ChatNoir() {
   const [isAutoSupportMode, setIsAutoSupportMode] = useState(() => {
     try { return localStorage.getItem('chatnoir_autoSupportMode') === 'true'; } catch { return false; }
   });
+  const [isScenarioDebugMode, setIsScenarioDebugMode] = useState(false);
   const supportInputRef = useRef<ChatInputHandle>(null);
   const [supportMessages, setSupportMessages] = useState<AppMessage[]>([]);
   const [supportStorySnapshots, setSupportStorySnapshots] = useState<SupportStorySnapshot[]>([]);
@@ -874,10 +893,17 @@ export default function ChatNoir() {
   const isInitialScrollDone = useRef(false);
   const supportScrollRef = useRef<HTMLDivElement>(null);
   const supportAbortControllerRef = useRef<AbortController | null>(null);
+  const isScenarioDebugModeRef = useRef(false);
+  const scenarioDebugSessionRef = useRef(0);
+  const debugAutomatedMessageRef = useRef(false);
 
   useEffect(() => {
     latestMessagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    isScenarioDebugModeRef.current = isScenarioDebugMode;
+  }, [isScenarioDebugMode]);
 
   // GMチャット：新しいメッセージが来たら自動スクロール
   useEffect(() => {
@@ -926,6 +952,10 @@ export default function ChatNoir() {
     setSupportMessages([]);
     setSupportStorySnapshots([]);
     setSupportSuggestions([]);
+    isScenarioDebugModeRef.current = false;
+    scenarioDebugSessionRef.current += 1;
+    debugAutomatedMessageRef.current = false;
+    setIsScenarioDebugMode(false);
     gmInputRef.current?.clear();
     supportInputRef.current?.clear();
     setCharactersData([]);
@@ -964,6 +994,29 @@ export default function ChatNoir() {
     setTimeout(() => setToastMsg(''), 3000);
   };
 
+  const stopScenarioDebugMode = (options: { showToast?: boolean; reason?: string; abortRequests?: boolean } = {}) => {
+    const {
+      showToast: shouldShowToast = true,
+      reason = 'シナリオデバッグモードを停止しました',
+      abortRequests = true,
+    } = options;
+
+    scenarioDebugSessionRef.current += 1;
+    isScenarioDebugModeRef.current = false;
+    setIsScenarioDebugMode(false);
+
+    if (abortRequests && supportAbortControllerRef.current) {
+      supportAbortControllerRef.current.abort();
+    }
+    if (abortRequests && debugAutomatedMessageRef.current && abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    if (shouldShowToast) {
+      showToast(reason);
+    }
+  };
+
   const restoreStateData = (raw: unknown, targetGameState?: GameState) => {
     const parsed = normalizeStoredGameState(raw);
     // 明示的な指定があればそれを使用、なければ保存されたもの、それもなければPLAYING
@@ -971,6 +1024,9 @@ export default function ChatNoir() {
     const shouldOpenGmModal = parsed.isGmModalOpen === true;
     const shouldOpenSupportSidebar = parsed.isSupportSidebarOpen === true;
     const shouldOpenSupportModal = !shouldOpenSupportSidebar && parsed.isSupportModalOpen === true;
+    isScenarioDebugModeRef.current = false;
+    scenarioDebugSessionRef.current += 1;
+    debugAutomatedMessageRef.current = false;
     setGameState(nextState);
     setMessages(parsed.messages || []);
     setGmRuleText(parsed.gmRuleText || '');
@@ -1012,6 +1068,7 @@ export default function ChatNoir() {
     setIsSupportSidebarOpen(shouldOpenSupportSidebar);
     setIsSupportModalOpen(shouldOpenSupportModal);
     setSupportScrollTarget(null);
+    setIsScenarioDebugMode(false);
     const restoredMapState = normalizeStoredMapState(raw);
     setMapLayers(restoredMapState.layers);
     setCurrentPos(restoredMapState.currentPos || cloneDefaultCurrentPos());
@@ -1373,6 +1430,10 @@ export default function ChatNoir() {
     setSupportMessages([]);
     setSupportStorySnapshots([]);
     setSupportSuggestions([]);
+    isScenarioDebugModeRef.current = false;
+    scenarioDebugSessionRef.current += 1;
+    debugAutomatedMessageRef.current = false;
+    setIsScenarioDebugMode(false);
     supportInputRef.current?.clear();
     setCharactersData([]);
     setFactsData([]);
@@ -1516,7 +1577,7 @@ export default function ChatNoir() {
     // UI（小説空間）には出さず、APIの裏側で送るメッセージ
     let triggerText = '';
     if (commandType === 'characters') {
-      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。このシナリオの主人公（プレイヤー自身）と、ここまでに登場した人物の基本情報を以下のJSON形式のみで出力せよ。※システムプロンプトの「設定ファイル」にある裏設定や真相を先回りして書くことは【重大なルール違反】です。必ず【これまでのチャット履歴で主人公が実際に知り得た情報のみ】で構成すること。\n\n【名前の出力ルール】\n1. 苗字のみ、あるいは名前のみしか明かされていない場合、`name` には【その判明している部分のみ】を出力してください。\n2. フルネームを出力して良いのは、姓名の両方が明示的に明かされた場合のみです。\n3. 正体が不明な場合は『黒服の男』などの外観的特徴を `name` に出力してください。\n4. 【重要】`true_name` は、正体が不明な段階であっても、設定ファイルに基づいた【一貫した本名（ID）】を必ず使用してください。これにより、表示名が変わっても同一人物として管理されます。\n\n```json\n{\n  \"characters\": [\n    { \"true_name\": \"本当の名前(一貫したIDとして使用)\", \"is_name_known_to_player\": trueかfalse, \"name\": \"上記のルールに従った表示名\", \"gender\": \"male/female/unknown\", \"info\": \"既知の情報\" }\n  ]\n}\n```）";
+      triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。このシナリオの主人公（プレイヤー自身）と、ここまでに登場した人物の基本情報を以下のJSON形式のみで出力せよ。※システムプロンプトの「設定ファイル」にある裏設定や真相を先回りして書くことは【重大なルール違反】です。必ず【これまでのチャット履歴で主人公が実際に知り得た情報】と【主人公が物語開始時点で当然知っている前提情報】のみで構成すること。\n\n【名前の出力ルール】\n1. 苗字のみ、あるいは名前のみしか明かされていない場合、`name` には【その判明している部分のみ】を出力してください。\n2. フルネームを出力して良いのは、姓名の両方が明示的に明かされた場合のみです。\n3. ただし、家族・同居人など、主人公が物語開始時点で本名を当然知っている人物については、本文中で本名が明示されていなくても `is_name_known_to_player` を true にし、`name` に本名を出力して構いません。\n4. 『父』『母』『おばあちゃん』『先生』『店長』などの呼称・続柄・役職・通称しか分かっていない場合は、それを `name` に出力してください。\n5. 『黒服の男』などの外観的特徴を `name` に出力してよいのは、呼称・続柄・役職・通称・名前のいずれもまだ分からない場合のみです。\n6. 【重要】`true_name` は、正体が不明な段階であっても、設定ファイルに基づいた【一貫した本名（ID）】を必ず使用してください。これにより、表示名が変わっても同一人物として管理されます。\n\n```json\n{\n  \"characters\": [\n    { \"true_name\": \"本当の名前(一貫したIDとして使用)\", \"is_name_known_to_player\": trueかfalse, \"name\": \"上記のルールに従った表示名\", \"gender\": \"male/female/unknown\", \"info\": \"既知の情報\" }\n  ]\n}\n```）";
     } else if (commandType === 'facts') {
       triggerText = "（システムコマンド：GMとしてではなくシステムとして応答せよ。現在主人公が把握している確定的な事実を以下のJSON形式のみで出力せよ。※「設定ファイル」に記載されている真相や裏設定は絶対に反映させず、必ず【これまでのチャット履歴で主人公が実際に体験・確認した事実のみ】を抽出すること。先回りしたネタバレ記述は厳禁。\n```json\n{\n  \"facts\": [\"事実1\", \"事実2\"]\n}\n```）";
     } else if (commandType === 'mysteries') {
@@ -1621,42 +1682,44 @@ ${currentMapJson}
           // データをサイドバー用の状態変数にセット
           if (commandType === 'characters' && parsedCharacters) {
             setCharactersData(prev => {
-              const updated = [...prev];
-              parsedCharacters.forEach((character) => {
-                const newTrueName = (character.true_name || '').replace(/\s+/g, '');
-                const newDisplayName = (character.name || '').replace(/\s+/g, '');
+              const normalizeCharacterId = (value?: string) => (value || '').replace(/\s+/g, '');
+              const findMatchedPreviousCharacter = (character: CharacterSummary) => {
+                const newTrueName = normalizeCharacterId(character.true_name);
+                const newDisplayName = normalizeCharacterId(character.name);
 
-                const idx = updated.findIndex(old => {
-                  const oldTrueName = (old.true_name || '').replace(/\s+/g, '');
-                  const oldDisplayName = (old.name || '').replace(/\s+/g, '');
-                  // true_name が両方あれば true_name で一致判定（最優先）
+                return prev.find((old) => {
+                  const oldTrueName = normalizeCharacterId(old.true_name);
+                  const oldDisplayName = normalizeCharacterId(old.name);
+
                   if (newTrueName && oldTrueName) return newTrueName === oldTrueName;
-                  // new に true_name があり old にない場合：old の displayName が new の displayName か true_name と一致するか
-                  if (newTrueName && !oldTrueName) return oldDisplayName === newDisplayName || oldDisplayName === newTrueName;
-                  // どちらも true_name がなければ displayName で判定
-                  if (!newTrueName && !oldTrueName) return newDisplayName && oldDisplayName && newDisplayName === oldDisplayName;
-                  return false;
+                  if (newTrueName && !oldTrueName) {
+                    return oldDisplayName === newDisplayName || oldDisplayName === newTrueName;
+                  }
+                  if (!newTrueName && oldTrueName) {
+                    return oldTrueName === newDisplayName || oldDisplayName === newDisplayName;
+                  }
+                  return newDisplayName && oldDisplayName && newDisplayName === oldDisplayName;
                 });
+              };
 
-                if (idx !== -1) {
-                  // 画像はユーザーが設定したものを維持する
-                  updated[idx] = { ...updated[idx], ...character, image: updated[idx].image, isGenerating: false };
-                } else {
-                  updated.push({ ...character, image: null, isGenerating: false });
-                }
-              });
-
-              // 重複掃除
-              const unique: CharacterData[] = [];
+              const nextCharacters: CharacterData[] = [];
               const seen = new Set<string>();
-              updated.forEach(item => {
-                const id = (item.true_name || item.name || '').replace(/\s+/g, '');
-                if (!seen.has(id)) {
-                  seen.add(id);
-                  unique.push(item);
-                }
+
+              parsedCharacters.forEach((character) => {
+                const identity = normalizeCharacterId(character.true_name) || normalizeCharacterId(character.name);
+                if (!identity || seen.has(identity)) return;
+
+                seen.add(identity);
+                const previous = findMatchedPreviousCharacter(character);
+                nextCharacters.push({
+                  ...character,
+                  image: previous?.image || null,
+                  isGenerating: false,
+                  lastPrompt: previous?.lastPrompt
+                });
               });
-              return unique;
+
+              return nextCharacters;
             });
             showToast("人物情報を更新しました");
           } else if (commandType === 'facts' && parsedFacts) {
@@ -1706,8 +1769,8 @@ ${currentMapJson}
     }
   };
 
-  const handleGeneratePrompt = async (characterName: string) => {
-    setCharactersData(curr => curr.map(old => old.name === characterName ? { ...old, isGenerating: true } : old));
+  const handleGeneratePrompt = async (characterId: string, characterName: string) => {
+    setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, isGenerating: true } : old));
     try {
       const res = await fetch('/api/generate_avatar', {
         method: 'POST',
@@ -1727,18 +1790,18 @@ ${currentMapJson}
         } catch {
           alert("プロンプト:\n" + data.prompt);
         }
-        setCharactersData(curr => curr.map(old => old.name === characterName ? { ...old, isGenerating: false, lastPrompt: data.prompt } : old));
+        setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, isGenerating: false, lastPrompt: data.prompt } : old));
       } else {
-        setCharactersData(curr => curr.map(old => old.name === characterName ? { ...old, isGenerating: false } : old));
+        setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, isGenerating: false } : old));
         alert("生成に失敗しました: " + (data.error || '不明なエラー'));
       }
     } catch {
-      setCharactersData(curr => curr.map(old => old.name === characterName ? { ...old, isGenerating: false } : old));
+      setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, isGenerating: false } : old));
       alert("通信エラーが発生しました");
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, characterName: string) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, characterId: string, characterName: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -1746,7 +1809,7 @@ ${currentMapJson}
     reader.onload = (event) => {
       const base64 = event.target?.result as string;
       if (base64) {
-        setCharactersData(curr => curr.map(old => old.name === characterName ? { ...old, image: base64 } : old));
+        setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, image: base64 } : old));
         showToast(`${characterName}の画像を設定しました`);
       }
     };
@@ -1754,8 +1817,8 @@ ${currentMapJson}
     e.target.value = '';
   };
 
-  const handleDeleteImage = (characterName: string) => {
-    setCharactersData(curr => curr.map(old => old.name === characterName ? { ...old, image: null } : old));
+  const handleDeleteImage = (characterId: string, characterName: string) => {
+    setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, image: null } : old));
     showToast(`${characterName}の画像を削除しました`);
   };
 
@@ -1849,7 +1912,7 @@ ${currentMapJson}
 
   const buildSupportHistoryMessages = (): AppMessage[] => {
     const supportConversationHistory = supportMessages
-      .filter((message) => message.kind !== 'selected-suggestion')
+      .filter((message) => message.kind !== 'selected-suggestion' && message.kind !== 'debug-selected-action')
       .filter((message) => Boolean(message.parts?.[0]?.text));
 
     if (supportConversationHistory.length === 0) {
@@ -1882,9 +1945,10 @@ ${currentMapJson}
     setIsSupportSidebarOpen(false);
   };
 
-  const sendSupportMessage = async (overrideText?: string) => {
+  const sendSupportMessage = async (overrideText?: string): Promise<SupportResponseResult | null> => {
     const textToSend = overrideText !== undefined ? overrideText : (supportInputRef.current?.getCurrentText() ?? '');
-    if (!textToSend.trim() || isSupportLoading) return;
+    if (!textToSend.trim() || isSupportLoading) return null;
+    const isScenarioDebugRequest = overrideText === SCENARIO_DEBUG_PROMPT;
 
     const newUserMessage: AppMessage = { role: 'user', parts: [{ text: textToSend }] };
     const newHistory: AppMessage[] = [...supportMessages, newUserMessage];
@@ -1933,24 +1997,31 @@ ${currentMapJson}
       const data = await res.json();
 
       if (res.ok) {
+        const normalizedSuggestions = Array.isArray(data.suggestions)
+          ? data.suggestions
+              .filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
+              .map((s: string) => s
+                .replace(/\/\/\s*[a-z]?\s*/gi, '')
+                .replace(/^\s*[\d]+\.\s*/, '')
+                .trim()
+              )
+              .filter((s: string) => s.length > 0)
+              .slice(0, 3)
+          : [];
         const nextModelMessage: AppMessage = {
           role: 'model',
           parts: [{ text: typeof data.text === 'string' ? data.text : '' }]
         };
         const nextMessages: AppMessage[] = [...newHistory, nextModelMessage];
+        const nextSuggestions = isScenarioDebugRequest ? [] : normalizedSuggestions;
         setSupportMessages(nextMessages);
-        setSupportSuggestions(Array.isArray(data.suggestions)
-          ? data.suggestions
-              .filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
-              .map((s: string) => s
-                .replace(/\/\/\s*[a-z]?\s*/gi, '')  // //s や // などの残骸を除去
-                .replace(/^\s*[\d]+\.\s*/, '')        // 先頭の番号付きリスト「1. 」を除去
-                .trim()
-              )
-              .filter((s: string) => s.length > 0)
-              .slice(0, 3)
-          : []);
+        setSupportSuggestions(nextSuggestions);
         setSupportScrollTarget(`support-message-${nextMessages.length - 1}`);
+        return {
+          text: typeof data.text === 'string' ? data.text : '',
+          suggestions: nextSuggestions,
+          action: typeof data.action === 'string' ? data.action.trim() : '',
+        };
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
         alert('サポートAIの応答に失敗しました: ' + errorStr);
@@ -1959,6 +2030,7 @@ ${currentMapJson}
         if (overrideText === undefined) {
           supportInputRef.current?.setValue(textToSend);
         }
+        return null;
       }
     } catch (err: unknown) {
       if (!isAbortError(err)) {
@@ -1970,10 +2042,49 @@ ${currentMapJson}
       if (overrideText === undefined) {
         supportInputRef.current?.setValue(textToSend);
       }
+      return null;
     } finally {
       setIsSupportLoading(false);
       supportAbortControllerRef.current = null;
     }
+  };
+
+  const runScenarioDebugStep = async () => {
+    const debugSessionId = scenarioDebugSessionRef.current;
+    if (!isScenarioDebugModeRef.current || isSupportLoading) return;
+
+    const supportResult = await sendSupportMessage(SCENARIO_DEBUG_PROMPT);
+
+    if (!isScenarioDebugModeRef.current || debugSessionId !== scenarioDebugSessionRef.current) {
+      return;
+    }
+
+    const nextInput = supportResult?.action || supportResult?.suggestions[0]?.trim();
+
+    if (!nextInput) {
+      stopScenarioDebugMode({
+        showToast: false,
+        abortRequests: false,
+      });
+      showToast('シナリオデバッグモードを停止しました。自動入力候補を作れませんでした');
+      return;
+    }
+
+    setSupportMessages((prev) => ([
+      ...prev,
+      {
+        role: 'model',
+        parts: [{ text: `### ロアが実行する入力\n\n${nextInput}` }],
+        kind: 'debug-selected-action'
+      }
+    ]));
+    setTimeout(() => scrollSupportToBottom(), 0);
+
+    if (!isScenarioDebugModeRef.current || debugSessionId !== scenarioDebugSessionRef.current) {
+      return;
+    }
+
+    await sendMessage(nextInput, false, { automatedByDebug: true });
   };
 
   // --- セーブ・ロード機能 ---
@@ -2074,17 +2185,33 @@ ${currentMapJson}
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // --- 通常の行動入力 ---
-  const sendMessage = async (overrideText?: string, isGm: boolean = false) => {
+  const startScenarioDebugMode = () => {
+    if (gameState !== 'PLAYING' || isLoading || isSupportLoading) return;
+
+    scenarioDebugSessionRef.current += 1;
+    isScenarioDebugModeRef.current = true;
+    setIsScenarioDebugMode(true);
+    if (!isSupportSidebarOpen && !isSupportModalOpen) {
+      setIsSupportModalOpen(true);
+    }
+    showToast('シナリオデバッグモードを開始しました');
+    void runScenarioDebugStep();
+  };
+
+  const sendMessage = async (overrideText?: string, isGm: boolean = false, options?: { automatedByDebug?: boolean }) => {
+    const automatedByDebug = options?.automatedByDebug === true;
     const textToSend = overrideText !== undefined ? overrideText : (chatInputRef.current?.getCurrentText() ?? '');
     if (!textToSend.trim() || isLoading) return;
 
+    const previousMessages = latestMessagesRef.current;
     const actualText = isGm ? `※GMへ：\n${textToSend}` : textToSend;
     const newUserMsg: AppMessage = { role: 'user', parts: [{ text: actualText }], isGm };
-    const newHistory: AppMessage[] = [...messages, newUserMsg];
+    const newHistory: AppMessage[] = [...previousMessages, newUserMsg];
     latestMessagesRef.current = newHistory;
     setMessages(newHistory);
     
     setIsLoading(true);
+    debugAutomatedMessageRef.current = automatedByDebug;
     // 自分が送信した直後だけは一番下（最新の自分の入力）までスクロールさせる
     setTimeout(() => scrollToBottom(), 100);
 
@@ -2118,12 +2245,22 @@ ${currentMapJson}
         latestMessagesRef.current = nextMessages;
         setMessages(nextMessages);
         // エンディング判定：AIのレスポンスに【終】が含まれていたらエンディング待機状態へ
-        if (data.text.includes('【終】') && endingPhase === 'NONE') {
+        const hasReachedEnding = typeof data.text === 'string' && data.text.includes('【終】');
+        if (hasReachedEnding && endingPhase === 'NONE') {
           setEndingPhase('READY_TO_END');
         }
-        // 自動おたすけモード：本編（非GM）の応答後にロアにおまかせを自動起動
-        if (isAutoSupportMode && !isGm) {
-          sendSupportMessage(SUPPORT_SUGGESTION_PROMPT);
+        if (!isGm) {
+          if (hasReachedEnding && isScenarioDebugModeRef.current) {
+            stopScenarioDebugMode({
+              showToast: false,
+              abortRequests: false,
+            });
+            showToast('シナリオデバッグモードを停止しました。エンディングに到達しました');
+          } else if (isScenarioDebugModeRef.current) {
+            void runScenarioDebugStep();
+          } else if (isAutoSupportMode) {
+            void sendSupportMessage(SUPPORT_SUGGESTION_PROMPT);
+          }
         }
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
@@ -2134,13 +2271,21 @@ ${currentMapJson}
         alert(msg);
         
         // 再送処理：履歴からユーザー発言を取り除き、入力欄に戻す
-        latestMessagesRef.current = messages;
-        setMessages(messages);
+        latestMessagesRef.current = previousMessages;
+        setMessages(previousMessages);
         if (isGm) {
           gmInputRef.current?.setValue(textToSend);
           setIsGmModalOpen(true);
         } else {
           chatInputRef.current?.setValue(textToSend);
+        }
+
+        if (automatedByDebug) {
+          stopScenarioDebugMode({
+            showToast: false,
+            abortRequests: false,
+          });
+          showToast('シナリオデバッグモードを停止しました。自動送信に失敗しました');
         }
       }
     } catch (err: unknown) {
@@ -2152,17 +2297,28 @@ ${currentMapJson}
       }
       
       // 再送処理
-      latestMessagesRef.current = messages;
-      setMessages(messages);
+      latestMessagesRef.current = previousMessages;
+      setMessages(previousMessages);
       if (isGm) {
         gmInputRef.current?.setValue(textToSend);
         setIsGmModalOpen(true);
       } else {
         chatInputRef.current?.setValue(textToSend);
       }
+
+      if (automatedByDebug && !isAbortError(err)) {
+        stopScenarioDebugMode({
+          showToast: false,
+          abortRequests: false,
+        });
+        showToast('シナリオデバッグモードを停止しました。自動送信に失敗しました');
+      }
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
+      if (automatedByDebug) {
+        debugAutomatedMessageRef.current = false;
+      }
     }
   };
 
@@ -2308,7 +2464,12 @@ ${currentMapJson}
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: isSidebarVariant ? '48px' : '56px', height: isSidebarVariant ? '48px' : '56px', borderRadius: '999px', objectFit: 'cover', border: '1px solid var(--border-color)' }} />
             <div>
-              <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '2px', fontSize: isSidebarVariant ? '1.05rem' : '1.2rem' }}>おたすけロアちゃん</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '2px', fontSize: isSidebarVariant ? '1.05rem' : '1.2rem' }}>おたすけロアちゃん</h3>
+                {isScenarioDebugMode && (
+                  <span style={{ padding: '0.2rem 0.55rem', borderRadius: '999px', background: 'var(--text-main)', color: 'var(--bg-color)', fontSize: '0.68rem', letterSpacing: '1px', fontWeight: 700 }}>DEBUG RUN</span>
+                )}
+              </div>
             </div>
           </div>
           {isSidebarVariant ? (
@@ -2328,16 +2489,33 @@ ${currentMapJson}
             ) : (
               visibleSupportMessages.map(({ message, index }) => (
                 <div key={index} data-support-anchor={`support-message-${index}`} style={{
-                  background: message.role === 'user' ? 'transparent' : 'var(--sidebar-bg)',
-                  border: message.role === 'user' ? 'none' : '1px solid var(--border-color)',
+                  background: message.kind === 'debug-selected-action'
+                    ? 'rgba(0,0,0,0.08)'
+                    : message.role === 'user'
+                      ? 'transparent'
+                      : 'var(--sidebar-bg)',
+                  border: message.kind === 'debug-selected-action'
+                    ? '1px dashed var(--text-main)'
+                    : message.role === 'user'
+                      ? 'none'
+                      : '1px solid var(--border-color)',
                   padding: '0.8rem',
                   borderRadius: '8px',
-                  color: message.role === 'user' ? 'var(--text-muted)' : 'var(--text-main)',
+                  color: message.kind === 'debug-selected-action'
+                    ? 'var(--text-main)'
+                    : message.role === 'user'
+                      ? 'var(--text-muted)'
+                      : 'var(--text-main)',
                   fontSize: '0.9rem',
                   whiteSpace: 'pre-wrap',
                   lineHeight: 1.7
                 }}>
-                  {message.role === 'user' ? (
+                  {message.kind === 'debug-selected-action' ? (
+                    <span style={{ fontWeight: 'bold', color: 'var(--text-main)', display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: '24px', height: '24px', borderRadius: '999px', objectFit: 'cover' }} />
+                      ロアが実行：
+                    </span>
+                  ) : message.role === 'user' ? (
                     <span style={{ fontWeight: 'bold' }}>あなた：<br /></span>
                   ) : (
                     <span style={{ fontWeight: 'bold', color: 'var(--text-main)', display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
@@ -2374,13 +2552,13 @@ ${currentMapJson}
         <ChatInput
           ref={supportInputRef}
           onSend={() => sendSupportMessage()}
-          disabled={isSupportLoading}
+          disabled={isSupportLoading || isScenarioDebugMode}
           style={{ width: '100%', minHeight: '72px', maxHeight: '140px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit', flexShrink: 0 }}
-          placeholder="例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて"
+          placeholder={isScenarioDebugMode ? 'シナリオデバッグモード中です。停止すると手動で相談できます。' : '例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて'}
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: isSidebarVariant ? '1.5rem' : '0' }}>
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <button onClick={() => sendSupportMessage(SUPPORT_SUGGESTION_PROMPT)} disabled={isSupportLoading} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: '4px', cursor: isSupportLoading ? 'not-allowed' : 'pointer', opacity: isSupportLoading ? 0.5 : 1, fontSize: '0.85rem' }}>ロアにおまかせ</button>
+            <button onClick={() => sendSupportMessage(SUPPORT_SUGGESTION_PROMPT)} disabled={isSupportLoading || isScenarioDebugMode} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: '4px', cursor: (isSupportLoading || isScenarioDebugMode) ? 'not-allowed' : 'pointer', opacity: (isSupportLoading || isScenarioDebugMode) ? 0.5 : 1, fontSize: '0.85rem' }}>ロアにおまかせ</button>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.75rem', color: isAutoSupportMode ? 'var(--text-main)' : 'var(--text-muted)', userSelect: 'none' }} title="本編が更新されるたびに自動でロアにおまかせを実行します">
               <div
                 onClick={() => setIsAutoSupportMode(v => { const next = !v; try { localStorage.setItem('chatnoir_autoSupportMode', String(next)); } catch {} return next; })}
@@ -2390,8 +2568,25 @@ ${currentMapJson}
               </div>
               自動
             </label>
+            <button
+              onClick={isScenarioDebugMode ? () => stopScenarioDebugMode() : () => startScenarioDebugMode()}
+              disabled={!isScenarioDebugMode && (isLoading || isSupportLoading)}
+              style={{
+                background: isScenarioDebugMode ? 'var(--text-main)' : 'transparent',
+                color: isScenarioDebugMode ? 'var(--bg-color)' : 'var(--text-main)',
+                border: '1px solid var(--text-main)',
+                padding: '0.6rem 1rem',
+                borderRadius: '4px',
+                cursor: (!isScenarioDebugMode && (isLoading || isSupportLoading)) ? 'not-allowed' : 'pointer',
+                opacity: (!isScenarioDebugMode && (isLoading || isSupportLoading)) ? 0.5 : 1,
+                fontSize: '0.85rem',
+                fontWeight: 600,
+              }}
+            >
+              {isScenarioDebugMode ? 'デバッグ停止' : 'シナリオデバッグ開始'}
+            </button>
           </div>
-          <button onClick={() => { const t = supportInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { supportInputRef.current?.clear(); sendSupportMessage(t); } }} disabled={isSupportLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isSupportLoading ? 'not-allowed' : 'pointer', opacity: isSupportLoading ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
+          <button onClick={() => { const t = supportInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { supportInputRef.current?.clear(); sendSupportMessage(t); } }} disabled={isSupportLoading || isScenarioDebugMode} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: (isSupportLoading || isScenarioDebugMode) ? 'not-allowed' : 'pointer', opacity: (isSupportLoading || isScenarioDebugMode) ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
         </div>
       </div>
     );
@@ -3216,9 +3411,9 @@ ${currentMapJson}
               ref={chatInputRef}
               className={styles.chatInput}
               style={{ minHeight: '80px', maxHeight: '300px', flex: 1, resize: 'none', padding: '12px' }}
-              placeholder="Enterで送信、Shift+Enterで改行"
+              placeholder={isScenarioDebugMode ? 'シナリオデバッグモード実行中です。停止すると手動入力できます。' : 'Enterで送信、Shift+Enterで改行'}
               onSend={(text) => { sendMessage(text); }}
-              disabled={isLoading || gameState === 'BRIEFING'}
+              disabled={isLoading || gameState === 'BRIEFING' || isScenarioDebugMode}
             />
             
             {/* GMモーダル */}
@@ -3311,7 +3506,7 @@ ${currentMapJson}
               <button
                 className={styles.sendBtn}
                 onClick={() => { const text = chatInputRef.current?.getCurrentText() ?? ''; if (text.trim()) { chatInputRef.current?.clear(); sendMessage(text); } }}
-                disabled={isLoading || gameState === 'BRIEFING'}
+                disabled={isLoading || gameState === 'BRIEFING' || isScenarioDebugMode}
                 style={{ height: '40px', padding: '0 2rem' }}
               >
                 送信
@@ -3375,9 +3570,8 @@ ${currentMapJson}
             </div>
 
             {/* フッター */}
-            <div style={{ padding: '0.8rem 2rem', background: 'rgba(0,0,0,0.03)', borderTop: '1px solid rgba(0,0,0,0.1)', color: '#888', fontSize: '0.7rem', display: 'flex', justifyContent: 'space-between' }}>
-              <span>表示方式：graph JSON + React Flow</span>
-              <span>ドラッグで移動、ホイールで拡大縮小、右下コントロールで全体表示</span>
+            <div style={{ padding: '0.8rem 2rem', background: 'rgba(0,0,0,0.03)', borderTop: '1px solid rgba(0,0,0,0.1)', color: '#888', fontSize: '0.7rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <span>ドラッグで移動、ホイールで拡大縮小</span>
             </div>
           </div>
         </div>
@@ -3510,13 +3704,15 @@ ${currentMapJson}
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: '1rem 0' }}>まだ判明している人物はいません</p>
                 ) : (
                   charactersData.map((c, i) => {
+                    const characterId = getCharacterIdentity(c);
+                    const fileInputId = `file-${encodeURIComponent(characterId)}-${i}`;
                     const isFemale = c.gender === 'female' || (!c.gender && /女|少女|娘|婦|嬢|姉|妹|彼女|妻|母|ヒロイン/.test(c.info + c.name));
                     return (
-                      <li key={c.true_name || c.name} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', fontFamily: 'var(--font-serif)', marginBottom: '1.5rem' }}>
+                      <li key={`${characterId}-${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', fontFamily: 'var(--font-serif)', marginBottom: '1.5rem' }}>
 
                         {/* 左：画像・メニュー列 */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '96px', flexShrink: 0 }}>
-                          <div style={{ width: '96px', height: '96px', borderRadius: '4px', background: c.image ? `url(${c.image}) center/cover no-repeat` : 'var(--bg-color)', display: 'flex', flexShrink: 0, alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-color)', cursor: 'pointer', overflow: 'hidden' }} onClick={() => document.getElementById(`file-${i}`)?.click()}>
+                          <div style={{ width: '96px', height: '96px', borderRadius: '4px', background: c.image ? `url(${c.image}) center/cover no-repeat` : 'var(--bg-color)', display: 'flex', flexShrink: 0, alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-color)', cursor: 'pointer', overflow: 'hidden' }} onClick={() => document.getElementById(fileInputId)?.click()}>
                             {!c.image && (
                               c.isGenerating ? <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>準備中..</span> :
                                 isFemale ? (
@@ -3532,30 +3728,30 @@ ${currentMapJson}
                           </div>
                           <input
                             type="file"
-                            id={`file-${i}`}
+                            id={fileInputId}
                             style={{ display: 'none' }}
                             accept="image/*"
-                            onChange={(e) => { handleImageUpload(e, c.name); setActiveCharacterOptions(null); }}
+                            onChange={(e) => { handleImageUpload(e, characterId, c.name); setActiveCharacterOptions(null); }}
                           />
                           {!c.isGenerating && (
                             <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
                               <button
-                                onClick={(e) => { e.stopPropagation(); setActiveCharacterOptions(activeCharacterOptions === c.name ? null : c.name); }}
+                                onClick={(e) => { e.stopPropagation(); setActiveCharacterOptions(activeCharacterOptions === characterId ? null : characterId); }}
                                 style={{ fontSize: '1.2rem', lineHeight: '10px', padding: '2px 8px', background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}
                               >
                                 ⋯
                               </button>
-                              {activeCharacterOptions === c.name && (
+                              {activeCharacterOptions === characterId && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', background: 'var(--sidebar-bg)', padding: '6px', border: '1px solid var(--border-color)', borderRadius: '4px', zIndex: 10, minWidth: '90px', boxShadow: '0 2px 5px rgba(0,0,0,0.2)' }}>
                                   <button
-                                    onClick={() => { handleGeneratePrompt(c.name); setActiveCharacterOptions(null); }}
+                                    onClick={() => { handleGeneratePrompt(characterId, c.name); setActiveCharacterOptions(null); }}
                                     style={{ fontSize: '0.6rem', padding: '4px', background: '#333', color: '#fff', border: 'none', borderRadius: '2px', cursor: 'pointer', textAlign: 'center' }}
                                   >
                                     プロンプト生成
                                   </button>
                                   {c.image && (
                                     <button
-                                      onClick={() => { handleDeleteImage(c.name); setActiveCharacterOptions(null); }}
+                                      onClick={() => { handleDeleteImage(characterId, c.name); setActiveCharacterOptions(null); }}
                                       style={{ fontSize: '0.6rem', padding: '4px', background: '#e11d48', color: '#fff', border: 'none', borderRadius: '2px', cursor: 'pointer', textAlign: 'center' }}
                                     >
                                       画像削除

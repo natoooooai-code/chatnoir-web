@@ -4,7 +4,6 @@ import React, { useEffect, useMemo } from 'react';
 import {
   Background,
   Controls,
-  MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -228,12 +227,6 @@ const MapFlowInner = ({ layer, currentNodeId }: { layer: GraphMapLayer; currentN
       proOptions={{ hideAttribution: true }}
       style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)' }}
     >
-      <MiniMap
-        pannable
-        zoomable
-        style={{ background: 'rgba(255,255,255,0.96)', border: '1px solid rgba(15, 23, 42, 0.08)' }}
-        nodeColor={(node) => (node.id === currentNodeId ? '#f59e0b' : '#cbd5e1')}
-      />
       <Controls showInteractive={false} />
       <Background gap={24} size={1} color="rgba(100, 116, 139, 0.15)" />
     </ReactFlow>
