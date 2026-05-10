@@ -223,6 +223,7 @@ export async function POST(req: NextRequest) {
 
     // 【1回目】通常の文章生成
     let responseText = '';
+    let hasUnknownSpeaker = false;
 
     if (assistantMode === 'support') {
       const supportSchema = {
@@ -234,11 +235,11 @@ export async function POST(req: NextRequest) {
           },
           action: {
             type: 'string',
-            description: '実際に送る入力文。デバッグ用途などで必要なときに1件だけ返す。不要な場合は空文字でもよい。小説の続きを書くような地の文・行動描写のスタイルで書くこと（「〜する」という動詞だけの概要は不可）。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。'
+            description: '実際に送る入力文。デバッグ用途などで必要なときに1件だけ返す。不要な場合は空文字でもよい。小説本文としてそのまま差し込める1〜2文の完成文にすること。小説の続きを書くようなスタイルで書き、「〜する」だけの概要文は不可。助言口調や解説口調は禁止。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。'
           },
           suggestions: {
             type: 'array',
-            description: '本編入力欄にそのまま入れて使える入力文を0件から3件。小説の続きを書くような地の文・行動描写のスタイルで書くこと（「〜する」という動詞だけの概要は不可）。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。',
+            description: '本編入力欄にそのまま入れて使える入力文を0件から3件。各候補は小説本文としてそのまま差し込める1〜2文の完成文にすること。小説の続きを書くようなスタイルで書き、「〜する」だけの概要文は不可。助言口調や解説口調は禁止。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。',
             items: {
               type: 'string'
             }
@@ -260,13 +261,29 @@ export async function POST(req: NextRequest) {
 
       let supportPayload: SupportPayload = {};
       try {
-        supportPayload = normalizeSupportPayload(JSON.parse(response.text || '{}') as unknown);
+        // コードフェンスや余分な文字を除去してからパース
+        let rawText = (response.text || '').trim();
+        // ① 完全なコードフェンス囲み (```json ... ```) を除去
+        const fenceMatch = rawText.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/);
+        if (fenceMatch) {
+          rawText = fenceMatch[1].trim();
+        } else {
+          // ② 開きフェンスなしで末尾に ``` だけある場合を除去
+          rawText = rawText.replace(/\n?```\s*$/, '').trim();
+        }
+        // ③ JSON以外の前後テキストがある場合は {} を切り出す
+        if (!rawText.startsWith('{')) {
+          const jsonStart = rawText.indexOf('{');
+          const jsonEnd = rawText.lastIndexOf('}');
+          if (jsonStart !== -1 && jsonEnd !== -1) rawText = rawText.slice(jsonStart, jsonEnd + 1);
+        }
+        supportPayload = normalizeSupportPayload(JSON.parse(rawText) as unknown);
       } catch (error) {
         console.error('Support JSON parse error:', response.text, error);
       }
 
       return NextResponse.json({
-        text: supportPayload.reply || response.text || '',
+        text: supportPayload.reply || '',
         action: supportPayload.action || '',
         suggestions: Array.isArray(supportPayload.suggestions) ? supportPayload.suggestions.slice(0, 3) : []
       });
@@ -356,9 +373,9 @@ export async function POST(req: NextRequest) {
           '俺', 'おれ', 'オレ',
           '私', 'わたし', 'ワタシ', 'わたくし', 'あたくし',
           '僕', 'ぼく', 'ボク',
-          'あたし', 'アタシ',
-          '自分', '己', 'うち'
+          'あたし', 'アタシ'
         ];
+        const protagonistSpeakerAliases = ['主人公', 'あなた', 'プレイヤー', '自分'];
         const protagonistKeywords = [
           ...(scenarioMeta.protagonistName ? [scenarioMeta.protagonistName, scenarioMeta.protagonistName.replace(/\s+/g, '')] : []),
           ...(scenarioMeta.protagonistFirstPerson ? [scenarioMeta.protagonistFirstPerson] : []),
@@ -388,9 +405,15 @@ export async function POST(req: NextRequest) {
           } else if (block.type === 'dialogue') {
             const speaker = (block.speaker_true_name || block.speaker_display_name || '').replace(/\s+/g, '');
             const pName = (scenarioMeta.protagonistName || '').replace(/\s+/g, '');
-            if (pName && (speaker.includes(pName) || speaker === pName)) {
+            const isSuspiciousDialogue = !speaker
+              || protagonistSpeakerAliases.includes(speaker)
+              || (pName ? speaker.includes(pName) || speaker === pName : false);
+
+            if (isSuspiciousDialogue) {
               needsAiValidation = true;
-              matchedKeyword = `発話者名: ${speaker}`;
+              matchedKeyword = !speaker
+                ? '発話者不明のセリフ'
+                : `発話者名: ${speaker}`;
               matchedText = `「${block.text}」`;
               break;
             }
@@ -424,6 +447,7 @@ export async function POST(req: NextRequest) {
         }
 
         // JSONのブロック配列をマークダウンフォーマットに結合
+        hasUnknownSpeaker = false;
         if (gmData.scene_blocks && Array.isArray(gmData.scene_blocks)) {
           finalMarkdown = gmData.scene_blocks.map((block) => {
             if (block.type === 'dialogue') {
@@ -438,7 +462,10 @@ export async function POST(req: NextRequest) {
                   dialogueText = dialogueText.slice(nameMatch[0].length - 1); // 「を残す
                 }
               }
-              if (!speaker) speaker = '不明';
+              if (!speaker) {
+                speaker = '不明';
+                hasUnknownSpeaker = true;
+              }
 
               // セリフ本文のクリーンアップ（括弧・句読点の残骸を除去）
               dialogueText = dialogueText
@@ -484,7 +511,7 @@ export async function POST(req: NextRequest) {
       responseText = response.text || '';
     }
 
-    return NextResponse.json({ text: responseText || '' });
+    return NextResponse.json({ text: responseText || '', ...(hasUnknownSpeaker ? { hasSpeakerWarning: true } : {}) });
   } catch (error: unknown) {
     console.error('Chat API Error:', error);
     return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });

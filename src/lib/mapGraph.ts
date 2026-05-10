@@ -407,7 +407,13 @@ export const parseMapState = (text: string): GraphMapState | null => {
     jsonContent = jsonContent.substring(firstBrace);
   }
 
-  const parsed = JSON.parse(jsonContent) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonContent) as unknown;
+  } catch {
+    return null;
+  }
+
   const mapPayload = isRecord(parsed) && isRecord(parsed['map']) ? parsed['map'] : parsed;
   return normalizeMapPayload(mapPayload);
 };

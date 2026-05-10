@@ -19,13 +19,47 @@ const NODE_HEIGHT = 68;
 const X_SPACING = 260;
 const Y_SPACING = 150;
 
+const CURRENT_NODE_COLORS = {
+  background: '#f59e0b',
+  border: '#9a3412',
+  color: '#1f2937'
+};
+
+const ROUTE_NODE_COLORS = {
+  background: '#fef3c7',
+  border: '#d97706',
+  color: '#78350f'
+};
+
+const TRANSIT_NODE_COLORS = {
+  background: '#e0f2fe',
+  border: '#0284c7',
+  color: '#0f172a'
+};
+
+const PLACE_NODE_COLORS = {
+  background: '#f8fafc',
+  border: '#475569',
+  color: '#0f172a'
+};
+
+const OTHER_NODE_COLORS = {
+  background: '#f3f4f6',
+  border: '#6b7280',
+  color: '#111827'
+};
+
+export const MAP_NODE_LEGEND_ITEMS = [
+  { key: 'current', label: '現在地', description: '今いる場所', colors: CURRENT_NODE_COLORS, pill: false },
+  { key: 'route', label: '道・廊下', description: '通路や移動経路', colors: ROUTE_NODE_COLORS, pill: true },
+  { key: 'transit', label: '分岐・階段', description: '接続点や上下移動', colors: TRANSIT_NODE_COLORS, pill: false },
+  { key: 'place', label: '場所・部屋', description: '建物や部屋など', colors: PLACE_NODE_COLORS, pill: false },
+  { key: 'other', label: 'その他', description: '分類外の地点', colors: OTHER_NODE_COLORS, pill: false },
+] as const;
+
 const getNodeColors = (node: GraphMapNode, isCurrent: boolean) => {
   if (isCurrent) {
-    return {
-      background: '#f59e0b',
-      border: '#9a3412',
-      color: '#1f2937'
-    };
+    return CURRENT_NODE_COLORS;
   }
 
   switch (node.kind) {
@@ -33,16 +67,16 @@ const getNodeColors = (node: GraphMapNode, isCurrent: boolean) => {
     case 'path':
     case 'road':
     case 'corridor':
-      return { background: '#fef3c7', border: '#d97706', color: '#78350f' };
+      return ROUTE_NODE_COLORS;
     case 'junction':
     case 'stairs':
-      return { background: '#e0f2fe', border: '#0284c7', color: '#0f172a' };
+      return TRANSIT_NODE_COLORS;
     case 'building':
     case 'room':
     case 'place':
-      return { background: '#f8fafc', border: '#475569', color: '#0f172a' };
+      return PLACE_NODE_COLORS;
     default:
-      return { background: '#f3f4f6', border: '#6b7280', color: '#111827' };
+      return OTHER_NODE_COLORS;
   }
 };
 

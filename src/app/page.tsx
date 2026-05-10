@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo, useImperativeHandle, useEffectEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import '@xyflow/react/dist/style.css';
-import MapFlowCanvas from '@/components/MapFlowCanvas';
+import MapFlowCanvas, { MAP_NODE_LEGEND_ITEMS } from '@/components/MapFlowCanvas';
 import {
   DEFAULT_MAP_LAYER_NAME,
   DEFAULT_MAP_STATE,
@@ -34,6 +34,8 @@ const SCENARIO_DEBUG_PROMPT = [
   'あなたはプレイヤーの代わりに、次に送る入力を1つだけ決めてください。',
   'まず「なぜその入力にするか」を簡潔に説明し、そのあとに実際に送る入力文を1つだけ示してください。'
 ].join('\n');
+const SUPPORT_HISTORY_MAX_MESSAGES = 18;
+const SUPPORT_HISTORY_MAX_CHARS = 12000;
 
 // --- Chat Input Component ---
 interface ChatInputHandle {
@@ -123,6 +125,51 @@ const ChatInput = React.forwardRef<ChatInputHandle, {
 });
 ChatInput.displayName = 'ChatInput';
 
+const FileUploadTrigger = ({
+  accept,
+  onChange,
+  buttonLabel,
+  multiple = false,
+  fullWidth = false,
+  helperText,
+}: {
+  accept: string;
+  onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  buttonLabel?: string;
+  multiple?: boolean;
+  fullWidth?: boolean;
+  helperText?: string;
+}) => {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', alignItems: fullWidth ? 'stretch' : 'flex-start' }}>
+      <label
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: fullWidth ? '100%' : 'auto',
+          minHeight: '40px',
+          padding: '0.75rem 1rem',
+          borderRadius: '6px',
+          border: '1px solid var(--border-color)',
+          background: 'var(--bg-color)',
+          color: 'var(--text-main)',
+          cursor: 'pointer',
+          fontSize: '0.8rem',
+          letterSpacing: '0.6px',
+          textAlign: 'center',
+        }}
+      >
+        <input type="file" accept={accept} multiple={multiple} onChange={onChange} style={{ display: 'none' }} />
+        {buttonLabel || (multiple ? 'ファイルをまとめて選ぶ' : 'ファイルを選ぶ')}
+      </label>
+      {helperText ? (
+        <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>{helperText}</p>
+      ) : null}
+    </div>
+  );
+};
+
 type GameState = 'WELCOME' | 'SAVES' | 'LOGIN' | 'BRIEFING' | 'PLAYING';
 type EndingPhase = 'NONE' | 'READY_TO_END' | 'FADE_OUT' | 'MENU' | 'REVIEW';
 type ThemeMode = 'light' | 'dark';
@@ -139,6 +186,7 @@ interface AppMessage {
   isGm?: boolean;
   isHidden?: boolean;
   kind?: string;
+  hasSpeakerWarning?: boolean;
 }
 
 interface CharacterData {
@@ -376,6 +424,54 @@ const normalizeScenarioMetaData = (value: unknown): ScenarioMetaData => {
     protagonistName: getString(value.protagonistName),
     protagonistFirstPerson: getString(value.protagonistFirstPerson)
   };
+};
+
+const normalizeUploadedScenarioMeta = (value: unknown): ScenarioMetaData | null => {
+  if (!isRecord(value)) return null;
+
+  const title = getString(value.title)?.trim();
+  const protagonistName = (getString(value.protagonist_name) || getString(value.protagonistName))?.trim();
+  const protagonistFirstPerson = (getString(value.protagonist_first_person) || getString(value.protagonistFirstPerson))?.trim();
+
+  if (!title && !protagonistName && !protagonistFirstPerson) {
+    return null;
+  }
+
+  return {
+    title,
+    protagonistName,
+    protagonistFirstPerson,
+  };
+};
+
+const extractScenarioMetaFromText = (text: string): ScenarioMetaData | null => {
+  const jsonBlocks = Array.from(text.matchAll(/```json\s*([\s\S]*?)```/gi), (match) => match[1]?.trim() || '')
+    .filter((candidate) => candidate.length > 0);
+  const candidates = jsonBlocks.length > 0 ? jsonBlocks : [text.trim()];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const normalizedMeta = normalizeUploadedScenarioMeta(parsed);
+      if (normalizedMeta) {
+        return normalizedMeta;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+};
+
+const mergeScenarioMetaData = (currentMeta: ScenarioMetaData, nextMeta: ScenarioMetaData): ScenarioMetaData => ({
+  title: nextMeta.title || currentMeta.title,
+  protagonistName: nextMeta.protagonistName || currentMeta.protagonistName,
+  protagonistFirstPerson: nextMeta.protagonistFirstPerson || currentMeta.protagonistFirstPerson,
+});
+
+const hasRequiredScenarioMeta = (value: ScenarioMetaData): boolean => {
+  return Boolean(value.protagonistName?.trim() && value.protagonistFirstPerson?.trim());
 };
 
 const normalizeSupportStorySnapshot = (value: unknown): SupportStorySnapshot | null => {
@@ -767,6 +863,8 @@ export default function ChatNoir() {
   const [supportSuggestions, setSupportSuggestions] = useState<string[]>([]);
   const [isSupportLoading, setIsSupportLoading] = useState(false);
   const [supportScrollTarget, setSupportScrollTarget] = useState<string | null>(null);
+  const latestSupportMessagesRef = useRef<AppMessage[]>([]);
+  const latestSupportStorySnapshotsRef = useRef<SupportStorySnapshot[]>([]);
 
   // ファイルから読み込んだテキストデータを保持するState
   const [gmRuleText, setGmRuleText] = useState('');
@@ -820,6 +918,14 @@ export default function ChatNoir() {
   const [openSections, setOpenSections] = useState<SidebarOpenSections>(() => ({ ...DEFAULT_OPEN_SECTIONS }));
 
   const currentNodeLabel = useMemo(() => getMapNodeLabel(mapLayers, currentPos), [mapLayers, currentPos]);
+  const scenarioSetupReadyCount = [
+    Boolean(coverImage),
+    Boolean(scenarioText),
+    Boolean(briefingText),
+    Boolean(prologueText),
+    Boolean(mapFileText),
+    hasRequiredScenarioMeta(scenarioMeta),
+  ].filter(Boolean).length;
 
   const applyMapState = (nextMapState: GraphMapState, mode: 'merge' | 'replace' = 'merge') => {
     const nextLayers = Object.keys(nextMapState.layers).length > 0 ? nextMapState.layers : cloneDefaultMapLayers();
@@ -886,6 +992,7 @@ export default function ChatNoir() {
   const [messages, setMessages] = useState<AppMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const latestMessagesRef = useRef<AppMessage[]>([]);
+  const regenerateMessageRef = useRef<((index: number) => void) | null>(null);
   const gmMessageCount = messages.filter(message => message.isGm).length;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -902,8 +1009,52 @@ export default function ChatNoir() {
   }, [messages]);
 
   useEffect(() => {
+    latestSupportMessagesRef.current = supportMessages;
+  }, [supportMessages]);
+
+  useEffect(() => {
+    latestSupportStorySnapshotsRef.current = supportStorySnapshots;
+  }, [supportStorySnapshots]);
+
+  useEffect(() => {
     isScenarioDebugModeRef.current = isScenarioDebugMode;
   }, [isScenarioDebugMode]);
+
+  const setSupportMessagesState = (nextValue: React.SetStateAction<AppMessage[]>) => {
+    setSupportMessages((prev) => {
+      const nextMessages = typeof nextValue === 'function'
+        ? (nextValue as (prevState: AppMessage[]) => AppMessage[])(prev)
+        : nextValue;
+      latestSupportMessagesRef.current = nextMessages;
+      return nextMessages;
+    });
+  };
+
+  const setSupportStorySnapshotsState = (nextValue: React.SetStateAction<SupportStorySnapshot[]>) => {
+    setSupportStorySnapshots((prev) => {
+      const nextSnapshots = typeof nextValue === 'function'
+        ? (nextValue as (prevState: SupportStorySnapshot[]) => SupportStorySnapshot[])(prev)
+        : nextValue;
+      latestSupportStorySnapshotsRef.current = nextSnapshots;
+      return nextSnapshots;
+    });
+  };
+
+  const removePendingDebugSupportAction = () => {
+    setSupportMessagesState((prev) => {
+      if (prev.length === 0) {
+        return prev;
+      }
+
+      const lastMessage = prev[prev.length - 1];
+      if (lastMessage.kind !== 'debug-selected-action') {
+        return prev;
+      }
+
+      return prev.slice(0, -1);
+    });
+    setSupportScrollTarget(null);
+  };
 
   // GMチャット：新しいメッセージが来たら自動スクロール
   useEffect(() => {
@@ -949,8 +1100,8 @@ export default function ChatNoir() {
 
   const resetAllState = () => {
     setMessages([]);
-    setSupportMessages([]);
-    setSupportStorySnapshots([]);
+    setSupportMessagesState([]);
+    setSupportStorySnapshotsState([]);
     setSupportSuggestions([]);
     isScenarioDebugModeRef.current = false;
     scenarioDebugSessionRef.current += 1;
@@ -1009,6 +1160,7 @@ export default function ChatNoir() {
       supportAbortControllerRef.current.abort();
     }
     if (abortRequests && debugAutomatedMessageRef.current && abortControllerRef.current) {
+      removePendingDebugSupportAction();
       abortControllerRef.current.abort();
     }
 
@@ -1059,8 +1211,8 @@ export default function ChatNoir() {
     const gmInputText = parsed.gmInputText;
     if (gmInputText) setTimeout(() => gmInputRef.current?.setValue(gmInputText), 0);
     setIsGmModalOpen(shouldOpenGmModal);
-    setSupportMessages(parsed.supportMessages || []);
-    setSupportStorySnapshots(parsed.supportStorySnapshots || []);
+    setSupportMessagesState(parsed.supportMessages || []);
+    setSupportStorySnapshotsState(parsed.supportStorySnapshots || []);
     setSupportSuggestions(parsed.supportSuggestions || []);
     const supportInputText = parsed.supportInputText;
     if (supportInputText) setTimeout(() => supportInputRef.current?.setValue(supportInputText), 0);
@@ -1325,6 +1477,12 @@ export default function ChatNoir() {
       const reader = new FileReader();
       reader.onload = (evt) => {
         const text = evt.target?.result as string;
+        const extractedScenarioMeta = extractScenarioMetaFromText(text);
+        if (extractedScenarioMeta && (hasRequiredScenarioMeta(extractedScenarioMeta) || name.includes('修正') || name.includes('meta'))) {
+          setScenarioMeta((prev) => mergeScenarioMetaData(prev, extractedScenarioMeta));
+          console.log('📋 [メタデータ読み込み完了]', extractedScenarioMeta);
+        }
+
         if (name.includes('setting') || name.includes('設定')) {
           setScenarioText(text);
         } else if (name.includes('prologue') || name.includes('プロローグ')) {
@@ -1345,22 +1503,6 @@ export default function ChatNoir() {
           }
         } else if (name.includes('gm') || name.includes('ルール')) {
           setGmRuleText(text);
-        } else if (name.includes('修正') || name.includes('meta')) {
-          // メタデータファイル（4_シナリオ修正.md）のパース
-          const metaJsonMatch = text.match(/```json\s*([\s\S]*?)```/);
-          if (metaJsonMatch) {
-            try {
-              const parsed = JSON.parse(metaJsonMatch[1].trim());
-              setScenarioMeta({
-                title: parsed.title || undefined,
-                protagonistName: parsed.protagonist_name || undefined,
-                protagonistFirstPerson: parsed.protagonist_first_person || undefined,
-              });
-              console.log('📋 [メタデータ読み込み完了]', parsed);
-            } catch (e) {
-              console.warn('メタデータJSONのパースに失敗:', e);
-            }
-          }
         }
       };
       reader.readAsText(file);
@@ -1386,18 +1528,11 @@ export default function ChatNoir() {
       setCoverImage('/package.png');
       setPrologueText(rPrologue.trim());
 
-      const metaJsonMatch = rMeta.match(/```json\s*([\s\S]*?)```/);
-      if (metaJsonMatch) {
-        try {
-          const parsed = JSON.parse(metaJsonMatch[1].trim());
-          setScenarioMeta({
-            title: parsed.title || undefined,
-            protagonistName: parsed.protagonist_name || undefined,
-            protagonistFirstPerson: parsed.protagonist_first_person || undefined,
-          });
-        } catch (e) {
-          console.warn('サンプルメタデータJSONのパースに失敗:', e);
-        }
+      const extractedScenarioMeta = extractScenarioMetaFromText(rMeta);
+      if (extractedScenarioMeta) {
+        setScenarioMeta((prev) => mergeScenarioMetaData(prev, extractedScenarioMeta));
+      } else {
+        console.warn('サンプルメタデータJSONのパースに失敗: 主人公情報を抽出できませんでした');
       }
 
       setMapFileText(rMap);
@@ -1420,6 +1555,10 @@ export default function ChatNoir() {
       alert("必須項目（APIキー、設定ファイル、プロローグ、概要ファイル）をすべてセットしてください！");
       return;
     }
+    if (!hasRequiredScenarioMeta(scenarioMeta)) {
+      alert('メタデータの主人公名と一人称を読み込めていません。メタデータファイルをアップロードしてください。');
+      return;
+    }
     if (!saveName.trim()) {
       alert("プロジェクト名を入力してください（セーブスロットの識別に必要です）");
       return;
@@ -1427,8 +1566,8 @@ export default function ChatNoir() {
     localStorage.setItem('chatnoir_apiKey', apiKey.trim());
     // 新規ゲーム開始時に前回の派生データをクリア
     setMessages([]);
-    setSupportMessages([]);
-    setSupportStorySnapshots([]);
+    setSupportMessagesState([]);
+    setSupportStorySnapshotsState([]);
     setSupportSuggestions([]);
     isScenarioDebugModeRef.current = false;
     scenarioDebugSessionRef.current += 1;
@@ -1911,22 +2050,45 @@ ${currentMapJson}
   };
 
   const buildSupportHistoryMessages = (): AppMessage[] => {
-    const supportConversationHistory = supportMessages
-      .filter((message) => message.kind !== 'selected-suggestion' && message.kind !== 'debug-selected-action')
+    const supportConversationHistory = latestSupportMessagesRef.current
+      .filter((message) => message.kind !== 'selected-suggestion' && message.kind !== 'debug-selected-action' && message.kind !== 'debug-request' && message.kind !== 'debug-analysis')
       .filter((message) => Boolean(message.parts?.[0]?.text));
 
     if (supportConversationHistory.length === 0) {
       return [];
     }
 
+    const recentSupportConversationHistory: AppMessage[] = [];
+    let totalChars = 0;
+
+    for (let index = supportConversationHistory.length - 1; index >= 0; index -= 1) {
+      const message = supportConversationHistory[index];
+      const text = message.parts?.[0]?.text ?? '';
+
+      if (recentSupportConversationHistory.length >= SUPPORT_HISTORY_MAX_MESSAGES) {
+        break;
+      }
+
+      if (recentSupportConversationHistory.length > 0 && totalChars + text.length > SUPPORT_HISTORY_MAX_CHARS) {
+        break;
+      }
+
+      recentSupportConversationHistory.unshift(message);
+      totalChars += text.length;
+    }
+
+    const isHistoryTrimmed = recentSupportConversationHistory.length < supportConversationHistory.length;
+
     return [
       {
         role: 'user',
         parts: [{
-          text: '【これまでのおたすけロアちゃんとの相談履歴】\n以下は過去の相談履歴です。user ロールは主人公からの相談、model ロールはロアの過去の回答です。履歴は参考情報として扱い、直前のロアの回答をそのまま繰り返さず、必要なら差分を加えて答えてください。'
+          text: isHistoryTrimmed
+            ? '【直近のおたすけロアちゃんとの相談履歴】\n以下は直近の相談履歴です。古い履歴は長さの都合で省略しています。user ロールは主人公からの相談、model ロールはロアの過去の回答です。履歴は参考情報として扱い、直前のロアの回答をそのまま繰り返さず、必要なら差分を加えて答えてください。'
+            : '【これまでのおたすけロアちゃんとの相談履歴】\n以下は過去の相談履歴です。user ロールは主人公からの相談、model ロールはロアの過去の回答です。履歴は参考情報として扱い、直前のロアの回答をそのまま繰り返さず、必要なら差分を加えて答えてください。'
         }]
       },
-      ...supportConversationHistory,
+      ...recentSupportConversationHistory,
     ];
   };
 
@@ -1949,11 +2111,17 @@ ${currentMapJson}
     const textToSend = overrideText !== undefined ? overrideText : (supportInputRef.current?.getCurrentText() ?? '');
     if (!textToSend.trim() || isSupportLoading) return null;
     const isScenarioDebugRequest = overrideText === SCENARIO_DEBUG_PROMPT;
+    const previousSupportMessages = latestSupportMessagesRef.current;
+    const previousSupportStorySnapshots = latestSupportStorySnapshotsRef.current;
 
-    const newUserMessage: AppMessage = { role: 'user', parts: [{ text: textToSend }] };
-    const newHistory: AppMessage[] = [...supportMessages, newUserMessage];
+    const newUserMessage: AppMessage = {
+      role: 'user',
+      parts: [{ text: textToSend }],
+      kind: isScenarioDebugRequest ? 'debug-request' : undefined,
+    };
+    const newHistory: AppMessage[] = [...previousSupportMessages, newUserMessage];
     const currentSupportStorySnapshot = buildSupportStorySnapshot();
-    const nextSupportStorySnapshots = [...supportStorySnapshots, currentSupportStorySnapshot];
+    const nextSupportStorySnapshots = [...previousSupportStorySnapshots, currentSupportStorySnapshot];
     const supportContextMessage: AppMessage = { role: 'user', parts: [{ text: buildSupportContext() }] };
     const supportHistoryMessages = buildSupportHistoryMessages();
     const supportStoryProgressMessage = buildSupportStoryProgressMessage(currentSupportStorySnapshot);
@@ -1963,9 +2131,9 @@ ${currentMapJson}
       '過去のロアの回答をそのまま繰り返さず、現在の相談に合わせて必要な差分や更新を加えてください。',
       '本編差分が与えられている場合は、前回相談以降に本編で何が進展したかを先に整理してから回答してください。'
     ].join('\n\n');
-    setSupportMessages(newHistory);
+    setSupportMessagesState(newHistory);
     setSupportSuggestions([]);
-    setSupportStorySnapshots(nextSupportStorySnapshots);
+    setSupportStorySnapshotsState(nextSupportStorySnapshots);
     setSupportScrollTarget(`support-message-${newHistory.length - 1}`);
 
     if (overrideText === undefined) {
@@ -2010,11 +2178,12 @@ ${currentMapJson}
           : [];
         const nextModelMessage: AppMessage = {
           role: 'model',
-          parts: [{ text: typeof data.text === 'string' ? data.text : '' }]
+          parts: [{ text: typeof data.text === 'string' ? data.text : '' }],
+          kind: isScenarioDebugRequest ? 'debug-analysis' : undefined,
         };
         const nextMessages: AppMessage[] = [...newHistory, nextModelMessage];
         const nextSuggestions = isScenarioDebugRequest ? [] : normalizedSuggestions;
-        setSupportMessages(nextMessages);
+        setSupportMessagesState(nextMessages);
         setSupportSuggestions(nextSuggestions);
         setSupportScrollTarget(`support-message-${nextMessages.length - 1}`);
         return {
@@ -2025,8 +2194,8 @@ ${currentMapJson}
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
         alert('サポートAIの応答に失敗しました: ' + errorStr);
-        setSupportMessages(supportMessages);
-        setSupportStorySnapshots(supportStorySnapshots);
+        setSupportMessagesState(previousSupportMessages);
+        setSupportStorySnapshotsState(previousSupportStorySnapshots);
         if (overrideText === undefined) {
           supportInputRef.current?.setValue(textToSend);
         }
@@ -2037,8 +2206,8 @@ ${currentMapJson}
         console.error(err);
         alert('サポートAIとの通信に失敗しました。');
       }
-      setSupportMessages(supportMessages);
-      setSupportStorySnapshots(supportStorySnapshots);
+      setSupportMessagesState(previousSupportMessages);
+      setSupportStorySnapshotsState(previousSupportStorySnapshots);
       if (overrideText === undefined) {
         supportInputRef.current?.setValue(textToSend);
       }
@@ -2070,11 +2239,11 @@ ${currentMapJson}
       return;
     }
 
-    setSupportMessages((prev) => ([
+    setSupportMessagesState((prev) => ([
       ...prev,
       {
         role: 'model',
-        parts: [{ text: `### ロアが実行する入力\n\n${nextInput}` }],
+        parts: [{ text: nextInput }],
         kind: 'debug-selected-action'
       }
     ]));
@@ -2239,7 +2408,8 @@ ${currentMapJson}
         const nextModelMessage: AppMessage = {
           role: 'model',
           parts: [{ text: typeof data.text === 'string' ? data.text : '' }],
-          isGm
+          isGm,
+          hasSpeakerWarning: data.hasSpeakerWarning === true,
         };
         const nextMessages: AppMessage[] = [...newHistory, nextModelMessage];
         latestMessagesRef.current = nextMessages;
@@ -2390,6 +2560,66 @@ ${currentMapJson}
     }
   };
 
+  // --- メッセージ再生成 ---
+  const regenerateMessage = async (targetIndex: number) => {
+    if (isLoading) return;
+    const capturedMessages = latestMessagesRef.current;
+    const modelMsg = capturedMessages[targetIndex];
+    if (!modelMsg || modelMsg.role !== 'model') return;
+
+    const isGmRegen = modelMsg.isGm ?? false;
+    const historyForRequest = capturedMessages.slice(0, targetIndex);
+
+    latestMessagesRef.current = historyForRequest;
+    setMessages(historyForRequest);
+    setIsLoading(true);
+    abortControllerRef.current = new AbortController();
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: abortControllerRef.current.signal,
+        body: JSON.stringify({
+          apiKey: apiKey,
+          model: selectedModel,
+          messages: historyForRequest,
+          systemInstruction: isGmRegen
+            ? gmRuleText + "\n\n" + scenarioText + "\n\n【GM質問モード】\nあなたはこのシナリオのGMとして、プレイヤーからのメタな質問・相談に答えます。現在の本編を続けて描写してはいけません。scene_blocks 形式の出力や小説本文の続きではなく、質問への回答だけを簡潔に返してください。位置・時刻のステータス行も不要です。"
+            : gmRuleText + "\n\n" + scenarioText + "\n\n" + MAP_INSTRUCTION,
+          fallbackEnabled,
+          scenarioMeta,
+          assistantMode: isGmRegen ? 'gm' : undefined,
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const newModelMessage: AppMessage = {
+          role: 'model',
+          parts: [{ text: typeof data.text === 'string' ? data.text : '' }],
+          isGm: isGmRegen,
+          hasSpeakerWarning: data.hasSpeakerWarning === true,
+        };
+        const nextMessages: AppMessage[] = [...historyForRequest, newModelMessage];
+        latestMessagesRef.current = nextMessages;
+        setMessages(nextMessages);
+      } else {
+        latestMessagesRef.current = capturedMessages;
+        setMessages(capturedMessages);
+        const errStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+        alert('再生成に失敗しました: ' + errStr);
+      }
+    } catch (err: unknown) {
+      latestMessagesRef.current = capturedMessages;
+      setMessages(capturedMessages);
+      if (!isAbortError(err)) alert('再生成中にエラーが発生しました。');
+    } finally {
+      setIsLoading(false);
+      abortControllerRef.current = null;
+    }
+  };
+  regenerateMessageRef.current = regenerateMessage;
+
   // --- ゲーム画面の描画最適化（入力毎の再レンダリング防止） ---
   const renderedMessages = useMemo(() => {
     return messages.map((msg, index) => {
@@ -2411,6 +2641,11 @@ ${currentMapJson}
               whiteSpace: 'pre-wrap'
             }}
           >
+            {msg.hasSpeakerWarning && (
+              <div style={{ color: '#b5890f', fontSize: '0.72rem', marginBottom: '0.4rem', opacity: 0.85, letterSpacing: '0.5px' }}>
+                ⚠️ 発話者が不明なセリフが含まれています
+              </div>
+            )}
             <ReactMarkdown
               components={{
                 p: ({ children }) => {
@@ -2439,7 +2674,7 @@ ${currentMapJson}
   const renderSupportPanel = (variant: 'modal' | 'sidebar') => {
     const isSidebarVariant = variant === 'sidebar';
     const supportHistoryEntries = supportMessages.map((message, index) => ({ message, index }));
-    const visibleSupportMessages = supportHistoryEntries.filter(({ message }) => message.kind !== 'selected-suggestion');
+    const visibleSupportMessages = supportHistoryEntries.filter(({ message }) => message.kind !== 'selected-suggestion' && message.kind !== 'debug-request');
 
     return (
       <div
@@ -2510,19 +2745,14 @@ ${currentMapJson}
                   whiteSpace: 'pre-wrap',
                   lineHeight: 1.7
                 }}>
-                  {message.kind === 'debug-selected-action' ? (
-                    <span style={{ fontWeight: 'bold', color: 'var(--text-main)', display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                      <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: '24px', height: '24px', borderRadius: '999px', objectFit: 'cover' }} />
-                      ロアが実行：
-                    </span>
-                  ) : message.role === 'user' ? (
+                  {message.kind !== 'debug-selected-action' && (message.role === 'user' ? (
                     <span style={{ fontWeight: 'bold' }}>あなた：<br /></span>
                   ) : (
                     <span style={{ fontWeight: 'bold', color: 'var(--text-main)', display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                       <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: '24px', height: '24px', borderRadius: '999px', objectFit: 'cover' }} />
                       ロア：
                     </span>
-                  )}
+                  ))}
                   <ReactMarkdown>{message.parts[0].text}</ReactMarkdown>
                 </div>
               ))
@@ -2865,7 +3095,16 @@ ${currentMapJson}
               <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
                 設定ファイル・概要・プロローグ・ルール・画像を<br />まとめて選択して一気に準備できます。
               </p>
-              <input type="file" multiple accept=".md,.txt,image/*" onChange={handleMultiFileRead} style={{ color: '#111', fontSize: '0.8rem', width: '100%', cursor: 'pointer', padding: '0.8rem', background: '#fff', border: '1px solid #ddd', borderRadius: '4px' }} />
+              <FileUploadTrigger
+                accept=".md,.txt,image/*"
+                multiple
+                fullWidth
+                onChange={handleMultiFileRead}
+                buttonLabel="ファイルをまとめて選ぶ"
+                helperText={scenarioSetupReadyCount > 0
+                  ? `現在の準備状況: ${scenarioSetupReadyCount}/6 項目を読み込み済みです。再選択すると上書きされます。`
+                  : '一括アップロード後の内容は下の各項目に反映されます。'}
+              />
             </div>
 
             <div style={{ position: 'relative', textAlign: 'center', margin: '2rem 0' }}>
@@ -2879,7 +3118,7 @@ ${currentMapJson}
                 <IconImage /> パッケージ画像
                 {coverImage && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <input type="file" accept="image/*" onChange={(e) => {
+              <FileUploadTrigger accept="image/*" onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const reader = new FileReader();
@@ -2887,7 +3126,7 @@ ${currentMapJson}
                   reader.readAsDataURL(file);
                 }
                 e.target.value = '';
-              }} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+              }} helperText={coverImage ? '画像を読み込み済みです。再選択すると上書きします。' : 'パッケージ画像を選ぶとここに反映されます。'} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -2895,7 +3134,7 @@ ${currentMapJson}
                 <IconFile /> 設定ファイル
                 {scenarioText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setScenarioText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+              <FileUploadTrigger accept=".md,.txt" onChange={(e) => handleFileRead(e, setScenarioText)} helperText={scenarioText ? '設定ファイルを読み込み済みです。再選択すると上書きします。' : '設定ファイルを選ぶとここに反映されます。'} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -2903,7 +3142,7 @@ ${currentMapJson}
                 <IconFile /> 概要ファイル
                 {briefingText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setBriefingText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+              <FileUploadTrigger accept=".md,.txt" onChange={(e) => handleFileRead(e, setBriefingText)} helperText={briefingText ? '概要ファイルを読み込み済みです。再選択すると上書きします。' : '概要ファイルを選ぶとここに反映されます。'} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -2911,7 +3150,7 @@ ${currentMapJson}
                 <IconFile /> プロローグ
                 {prologueText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <input type="file" accept=".md,.txt" onChange={(e) => handleFileRead(e, setPrologueText)} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+              <FileUploadTrigger accept=".md,.txt" onChange={(e) => handleFileRead(e, setPrologueText)} helperText={prologueText ? 'プロローグを読み込み済みです。再選択すると上書きします。' : 'プロローグファイルを選ぶとここに反映されます。'} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -2919,7 +3158,7 @@ ${currentMapJson}
                 <IconMap size={14} style={{ marginRight: '4px' }} /> マップ情報
                 {mapFileText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <input type="file" accept=".md,.txt" onChange={(e) => {
+              <FileUploadTrigger accept=".md,.txt" onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const reader = new FileReader();
@@ -2940,42 +3179,34 @@ ${currentMapJson}
                   };
                   reader.readAsText(file);
                 }
-              }} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+                e.target.value = '';
+              }} helperText={mapFileText ? 'マップ情報を読み込み済みです。再選択すると上書きします。' : '地図ファイルを選ぶとここに反映されます。'} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
               <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
                 <IconFile /> メタデータ
-                {scenarioMeta.title && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
+                {hasRequiredScenarioMeta(scenarioMeta) && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
 
-              <input type="file" accept=".md,.txt" onChange={(e) => {
+              <FileUploadTrigger accept=".md,.txt" onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const reader = new FileReader();
                   reader.onload = (evt) => {
                     const text = evt.target?.result as string;
-                    const metaJsonMatch = text.match(/```json\s*([\s\S]*?)```/);
-                    if (metaJsonMatch) {
-                      try {
-                        const parsed = JSON.parse(metaJsonMatch[1].trim());
-                        setScenarioMeta({
-                          title: parsed.title || undefined,
-                          protagonistName: parsed.protagonist_name || undefined,
-                          protagonistFirstPerson: parsed.protagonist_first_person || undefined,
-                        });
-                        showToast('メタデータを読み込みました');
-                      } catch {
-                        alert('JSONのパースに失敗しました。形式を確認してください。');
-                      }
+                    const extractedScenarioMeta = extractScenarioMetaFromText(text);
+                    if (extractedScenarioMeta && hasRequiredScenarioMeta(extractedScenarioMeta)) {
+                      setScenarioMeta((prev) => mergeScenarioMetaData(prev, extractedScenarioMeta));
+                      showToast('メタデータを読み込みました');
                     } else {
-                      alert('ファイル内に JSON ブロック (```json ... ```) が見つかりませんでした。');
+                      alert('ファイル内のメタデータから主人公名と一人称を読み取れませんでした。形式を確認してください。');
                     }
                   };
                   reader.readAsText(file);
                 }
                 e.target.value = '';
-              }} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+              }} helperText={hasRequiredScenarioMeta(scenarioMeta) ? '主人公名と一人称を読み込み済みです。再選択すると上書きします。' : 'メタデータファイルから主人公名と一人称を読み込みます。'} />
             </div>
 
 
@@ -2988,7 +3219,7 @@ ${currentMapJson}
                 }
               </p>
               <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>独自ルールに差し替える場合のみアップロード</p>
-              <input type="file" accept=".md,.txt" onChange={(e) => { handleFileRead(e, setGmRuleText); setIsCustomGmRule(true); }} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }} />
+              <FileUploadTrigger accept=".md,.txt" onChange={(e) => { handleFileRead(e, setGmRuleText); setIsCustomGmRule(true); }} helperText={isCustomGmRule ? '現在はカスタムルールを反映中です。再選択すると上書きします。' : '内蔵ルールを使う場合はアップロード不要です。'} />
             </div>
 
             <button
@@ -3415,7 +3646,6 @@ ${currentMapJson}
               onSend={(text) => { sendMessage(text); }}
               disabled={isLoading || gameState === 'BRIEFING' || isScenarioDebugMode}
             />
-            
             {/* GMモーダル */}
             {isGmModalOpen && (
               <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -3511,6 +3741,25 @@ ${currentMapJson}
               >
                 送信
               </button>
+              {/* 再生成ボタン */}
+              {(() => {
+                let latestModelIndex = -1;
+                for (let i = messages.length - 1; i >= 0; i--) {
+                  if (messages[i].role === 'model' && !messages[i].isGm) { latestModelIndex = i; break; }
+                }
+                return latestModelIndex >= 0 ? (
+                  <button
+                    onClick={() => regenerateMessageRef.current?.(latestModelIndex)}
+                    disabled={isLoading}
+                    title="直前のAI出力を再生成する"
+                    style={{ height: '40px', fontSize: '1.1rem', color: 'var(--text-muted)', background: 'transparent', border: 'none', padding: '0 8px', cursor: isLoading ? 'not-allowed' : 'pointer', opacity: 0.45, transition: 'opacity 0.2s', flexShrink: 0 }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.opacity = '0.9'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.opacity = '0.45'; }}
+                  >
+                    ↺
+                  </button>
+                ) : null;
+              })()}
             </div>
           </div>
         </div>
@@ -3567,6 +3816,28 @@ ${currentMapJson}
             {/* マップ本体（React Flow描画エリア） */}
             <div style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#fdfdfd', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <MapFlowCanvas layer={mapLayers[activeLayer] || DEFAULT_MAP_STATE.layers[DEFAULT_MAP_LAYER_NAME]} currentNodeId={currentPos.nodeId} />
+            </div>
+
+            <div style={{ padding: '0.9rem 2rem', borderTop: '1px solid rgba(0,0,0,0.08)', background: '#fff', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <p style={{ margin: 0, fontSize: '0.72rem', color: '#666', letterSpacing: '1px' }}>色の意味</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem 1rem' }}>
+                {MAP_NODE_LEGEND_ITEMS.map((item) => (
+                  <div key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', minWidth: '168px' }}>
+                    <span
+                      style={{
+                        width: '18px',
+                        height: '18px',
+                        borderRadius: item.pill ? '999px' : '6px',
+                        background: item.colors.background,
+                        border: `2px solid ${item.colors.border}`,
+                        display: 'inline-block',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={{ fontSize: '0.78rem', color: '#374151' }}>{item.label} - {item.description}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* フッター */}
