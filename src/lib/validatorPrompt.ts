@@ -1,7 +1,7 @@
 export const getValidationPrompt = (
   lastUserMessage: string,
   finalMarkdown: string,
-  scenarioMeta?: { protagonistName?: string, protagonistFirstPerson?: string }
+  scenarioMeta?: { protagonistName?: string; protagonistFirstPerson?: string }
 ): string => `あなたはTRPGの厳格なシステム判定器です。
 以下の【前提知識】を理解した上で、【プレイヤーの直前の宣言】に対する【今回のGMの地の文】に違反がないかチェックしてください。
 
@@ -12,16 +12,16 @@ export const getValidationPrompt = (
 【前提知識】
 1. これは一人称視点のテキストゲームです。
 2. 「プレイヤー ＝ 主人公 ＝ ${scenarioMeta?.protagonistName || '一人称'}」です。それ以外の人物はすべてNPCです。
-3. 地の文において、名前付きで「${scenarioMeta?.protagonistName || '主人公'}は～した」などと書かれている場合、それは主人公の行動をGMが代行して描写していることになるため、重大な違反（NG）です。
+3. 地の文において、名前付きで「${scenarioMeta?.protagonistName || '主人公'}は〜した」などと書かれている場合、それは主人公の行動をGMが代行して描写していることになるため、重大な違反（NG）です。
 4. NPC（${scenarioMeta?.protagonistName || '主人公'}以外）が自発的に行動したり喋ったりすることは正常な動作です。
-5. 地の文において、名前付きで「NPC名（凪など）は～した」と書かれている行動や心情はOKです。
+5. 地の文において、名前付きで「NPC名（凪など）は〜した」と書かれている行動や心情はOKです。
 
 【判定基準】
 NPCの行動ではなく、以下の描写をGMが勝手に代行していたら NG（却下）と判定せよ：
 - 主人公の思考・感情（例：「${scenarioMeta?.protagonistFirstPerson || '私'}は悲しくなった」等）
 - 主人公の名前（${scenarioMeta?.protagonistName || '設定名'}）を主語にした行動描写（例：「${scenarioMeta?.protagonistName || '主人公'}は走り出した」等）
-- 主人公の移動・物理的行動（「～へ向かった」「～を手に取った」等、主語が省略されていても明らかに主人公の動作である場合）
-- 主人公自身の発言（「${scenarioMeta?.protagonistFirstPerson || '私'}は～と言った」）
+- 主人公の移動・物理的行動（「〜へ向かった」「〜を手に取った」等、主語が省略されていても明らかに主人公の動作である場合）
+- 主人公自身の発言（「${scenarioMeta?.protagonistFirstPerson || '私'}は〜と言った」）
 - 主人公の一人称の不一致（設定が「${scenarioMeta?.protagonistFirstPerson || '俺'}」なのに「${scenarioMeta?.protagonistFirstPerson === '俺' ? '私' : '俺'}」を使っている等）
 
 【NGにしない例（正常な描写）】

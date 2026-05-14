@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo, useImperativeHandle, useEf
 import ReactMarkdown from 'react-markdown';
 import '@xyflow/react/dist/style.css';
 import MapFlowCanvas, { MAP_NODE_LEGEND_ITEMS } from '@/components/MapFlowCanvas';
+import { logClientViolation, requestAvatarPromptApi, requestChatApi } from '@/lib/geminiClient';
 import {
   DEFAULT_MAP_LAYER_NAME,
   DEFAULT_MAP_STATE,
@@ -27,8 +28,13 @@ const BetaBadge = () => <span style={{ fontSize: '0.58rem', letterSpacing: '1.4p
 
 const IDB_STORE = 'chatnoir_saves';
 const SCENARIO_STORE = 'scenario_master';
-const SUPPORT_AVATAR_PATH = '/Chibi-style_close-up_face_portrait_of_an_anime_gir-1775997248547.png';
-const DEFAULT_SUPPORT_PERSONA_PATH = '/support-personas/lore-support.md';
+const API_KEY_STORAGE_KEY = 'chatnoir_apiKey';
+const API_KEY_STORAGE_MODE_KEY = 'chatnoir_apiKeyStorageMode';
+const SUPPORT_AVATAR_PATH = 'Chibi-style_close-up_face_portrait_of_an_anime_gir-1775997248547.png';
+const DEFAULT_SUPPORT_PERSONA_PATH = 'support-personas/lore-support.md';
+const DEFAULT_SAMPLE_COVER_PATH = 'package.png';
+const APP_LOGO_PATH = 'logo.png';
+const APP_LOGO_WIDE_PATH = 'logo_yoko.png';
 const SUPPORT_SUGGESTION_PROMPT = '今の状況で次に入力すると良さそうな文を3つ提案して。';
 const SCENARIO_DEBUG_PROMPT = [
   'あなたはプレイヤーの代わりに、次に送る入力を1つだけ決めてください。',
@@ -36,6 +42,14 @@ const SCENARIO_DEBUG_PROMPT = [
 ].join('\n');
 const SUPPORT_HISTORY_MAX_MESSAGES = 18;
 const SUPPORT_HISTORY_MAX_CHARS = 12000;
+
+const resolvePublicAssetPath = (path: string): string => {
+  if (!path) return '';
+  if (path.startsWith('data:') || path.startsWith('blob:') || /^[a-z]+:\/\//i.test(path)) {
+    return path;
+  }
+  return path.replace(/^\/+/, '');
+};
 
 // --- Chat Input Component ---
 interface ChatInputHandle {
@@ -260,7 +274,6 @@ interface StoredGameState {
   prologueText?: string;
   mapFileText?: string;
   coverImage?: string;
-  apiKey?: string;
   charactersData?: CharacterData[];
   factsData?: string[];
   mysteriesData?: string[];
@@ -291,6 +304,8 @@ interface StoredGameState {
   isSupportModalOpen?: boolean;
   lastPlay?: string;
 }
+
+type ApiKeyStorageMode = 'session' | 'local';
 
 interface SpecialCommandPayload {
   characters?: CharacterSummary[];
@@ -556,7 +571,6 @@ const normalizeStoredGameState = (value: unknown): StoredGameState => {
     prologueText: getString(record.prologueText),
     mapFileText: getString(record.mapFileText),
     coverImage: getString(record.coverImage),
-    apiKey: getString(record.apiKey),
     charactersData: toCharacterArray(record.charactersData),
     factsData: toStringArray(record.factsData),
     mysteriesData: toStringArray(record.mysteriesData),
@@ -611,6 +625,52 @@ const getErrorMessage = (error: unknown): string => error instanceof Error ? err
 const isAbortError = (error: unknown): boolean => {
   if (error instanceof DOMException) return error.name === 'AbortError';
   return error instanceof Error && error.name === 'AbortError';
+};
+
+const isApiKeyStorageMode = (value: unknown): value is ApiKeyStorageMode => value === 'session' || value === 'local';
+
+const readStoredApiKey = (): { apiKey: string; mode: ApiKeyStorageMode } => {
+  try {
+    const sessionApiKey = sessionStorage.getItem(API_KEY_STORAGE_KEY);
+    if (sessionApiKey) return { apiKey: sessionApiKey, mode: 'session' };
+
+    const localApiKey = localStorage.getItem(API_KEY_STORAGE_KEY);
+    if (localApiKey) return { apiKey: localApiKey, mode: 'local' };
+
+    const savedMode = localStorage.getItem(API_KEY_STORAGE_MODE_KEY);
+    if (isApiKeyStorageMode(savedMode)) return { apiKey: '', mode: savedMode };
+  } catch {
+    // ignore storage access errors
+  }
+
+  return { apiKey: '', mode: 'session' };
+};
+
+const persistApiKey = (apiKey: string, mode: ApiKeyStorageMode) => {
+  const trimmedApiKey = apiKey.trim();
+
+  try {
+    localStorage.setItem(API_KEY_STORAGE_MODE_KEY, mode);
+
+    if (mode === 'local') {
+      if (trimmedApiKey) {
+        localStorage.setItem(API_KEY_STORAGE_KEY, trimmedApiKey);
+      } else {
+        localStorage.removeItem(API_KEY_STORAGE_KEY);
+      }
+      sessionStorage.removeItem(API_KEY_STORAGE_KEY);
+      return;
+    }
+
+    if (trimmedApiKey) {
+      sessionStorage.setItem(API_KEY_STORAGE_KEY, trimmedApiKey);
+    } else {
+      sessionStorage.removeItem(API_KEY_STORAGE_KEY);
+    }
+    localStorage.removeItem(API_KEY_STORAGE_KEY);
+  } catch {
+    // ignore storage access errors
+  }
 };
 
 async function getIDB(): Promise<IDBDatabase> {
@@ -684,6 +744,37 @@ async function getAllIDBSavesMeta(): Promise<AutoSaveMeta[]> {
       req.onerror = () => reject(req.error);
     });
   } catch { return []; }
+}
+
+async function scrubApiKeysFromIDB(): Promise<void> {
+  try {
+    const db = await getIDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.openCursor();
+
+      req.onsuccess = () => {
+        const cursor = req.result as IDBCursorWithValue | null;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+
+        const value = isRecord(cursor.value) ? { ...cursor.value } : null;
+        if (value && 'apiKey' in value) {
+          delete value.apiKey;
+          cursor.update(value);
+        }
+        cursor.continue();
+      };
+
+      req.onerror = () => reject(req.error);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // ignore IndexedDB cleanup errors
+  }
 }
 
 async function deleteFromIDB(key: string): Promise<void> {
@@ -833,6 +924,7 @@ const cloneDefaultCurrentPos = (): MapCurrentPos => ({ ...DEFAULT_MAP_STATE.curr
 
 export default function ChatNoir() {
   const [apiKey, setApiKey] = useState('');
+  const [apiKeyStorageMode, setApiKeyStorageMode] = useState<ApiKeyStorageMode>(() => readStoredApiKey().mode);
   // ゲームの進行ステータス
   const [gameState, setGameState] = useState<GameState>('WELCOME');
   const [endingPhase, setEndingPhase] = useState<EndingPhase>('NONE');
@@ -1188,7 +1280,6 @@ export default function ChatNoir() {
     setPrologueText(parsed.prologueText || '');
     setMapFileText(parsed.mapFileText || '');
     setCoverImage(parsed.coverImage || '');
-    if (parsed.apiKey) setApiKey(parsed.apiKey); // APIキーは未保存でも消さない
     setCharactersData((parsed.charactersData || []).map((character) => ({ ...character, isGenerating: false })));
     setFactsData(parsed.factsData || []);
     setMysteriesData(parsed.mysteriesData || []);
@@ -1241,7 +1332,7 @@ export default function ChatNoir() {
   }, [gameState, isLoaded]);
 
   useEffect(() => {
-    fetch(supportPersonaPath, { cache: 'no-store' })
+    fetch(resolvePublicAssetPath(supportPersonaPath), { cache: 'no-store' })
       .then(r => r.text())
       .then(text => {
         setSupportPersonaPrompt(text);
@@ -1251,15 +1342,18 @@ export default function ChatNoir() {
 
   // マウント時に保存されたキー・オートセーブを読み込む
   useEffect(() => {
-    const saved = localStorage.getItem('chatnoir_apiKey');
-    if (saved) setApiKey(saved);
+    const savedApiKey = readStoredApiKey();
+    if (savedApiKey.apiKey) setApiKey(savedApiKey.apiKey);
+    setApiKeyStorageMode(savedApiKey.mode);
 
     // GMルールを内蔵ファイルから自動ロード（ユーザーが手動でアップロードしない限り使用）
-    fetch('/scenarios/GMルール.md').then(r => r.text()).then(text => {
+    fetch(resolvePublicAssetPath('scenarios/GMルール.md')).then(r => r.text()).then(text => {
       setGmRuleText(prev => prev || text);
     }).catch(() => {});
 
     const runStartupInfo = async () => {
+      await scrubApiKeysFromIDB();
+
       // sessionStorageから前回の状態を読み込む（リロード用）
       const currentKey = sessionStorage.getItem('chatnoir-current-save-key');
       const isReload = !!currentKey;
@@ -1301,7 +1395,7 @@ export default function ChatNoir() {
     // 復元が終わる前に上書き保存されるのを防ぐため、isLoadedチェック
     if (isLoaded && gameState !== 'WELCOME' && gameState !== 'SAVES' && gameState !== 'LOGIN') {
       const currentData = {
-        gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey,
+        gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage,
         charactersData, factsData, mysteriesData, monologueData, playerMemo, openSections, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen,
         mapLayers, currentPos, fallbackEnabled,
         lastPlay: new Date().toISOString()
@@ -1515,17 +1609,17 @@ export default function ChatNoir() {
   const loadDefaultScenario = async () => {
     try {
       const [rGM, rScen, rBrief, rPrologue, rMeta, rMap] = await Promise.all([
-        fetch('/scenarios/GMルール.md').then(r => r.text()),
-        fetch('/scenarios/歯車_設定.md').then(r => r.text()),
-        fetch('/scenarios/歯車_概要.md').then(r => r.text()),
-        fetch('/scenarios/歯車_プロローグ.md').then(r => r.text()),
-        fetch('/scenarios/歯車_修正.md').then(r => r.text()),
-        fetch('/scenarios/歯車_地図.md').then(r => r.text()),
+        fetch(resolvePublicAssetPath('scenarios/GMルール.md')).then(r => r.text()),
+        fetch(resolvePublicAssetPath('scenarios/歯車_設定.md')).then(r => r.text()),
+        fetch(resolvePublicAssetPath('scenarios/歯車_概要.md')).then(r => r.text()),
+        fetch(resolvePublicAssetPath('scenarios/歯車_プロローグ.md')).then(r => r.text()),
+        fetch(resolvePublicAssetPath('scenarios/歯車_修正.md')).then(r => r.text()),
+        fetch(resolvePublicAssetPath('scenarios/歯車_地図.md')).then(r => r.text()),
       ]);
       setGmRuleText(rGM);
       setScenarioText(rScen);
       setBriefingText(rBrief);
-      setCoverImage('/package.png');
+      setCoverImage(DEFAULT_SAMPLE_COVER_PATH);
       setPrologueText(rPrologue.trim());
 
       const extractedScenarioMeta = extractScenarioMetaFromText(rMeta);
@@ -1563,7 +1657,7 @@ export default function ChatNoir() {
       alert("プロジェクト名を入力してください（セーブスロットの識別に必要です）");
       return;
     }
-    localStorage.setItem('chatnoir_apiKey', apiKey.trim());
+    persistApiKey(apiKey, apiKeyStorageMode);
     // 新規ゲーム開始時に前回の派生データをクリア
     setMessages([]);
     setSupportMessagesState([]);
@@ -1652,17 +1746,13 @@ export default function ChatNoir() {
 
     // AIにフェーズ2の最初の描写を生成させる
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          apiKey: apiKey,
-          model: selectedModel,
-          messages: phase2History,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText,
-          fallbackEnabled,
-          scenarioMeta
-        })
+      const res = await requestChatApi({
+        apiKey: apiKey,
+        model: selectedModel,
+        messages: phase2History,
+        systemInstruction: gmRuleText + "\n\n" + scenarioText,
+        fallbackEnabled,
+        scenarioMeta
       });
       const data = await res.json();
       if (res.ok) {
@@ -1790,17 +1880,13 @@ ${currentMapJson}
     const apiMessages: AppMessage[] = [...activeMessages, { role: 'user', parts: [{ text: triggerText }] }];
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          apiKey: apiKey,
-          model: selectedModel,
-          messages: apiMessages,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText + (mapFileText ? "\n\n【初期マップ設定】\n" + mapFileText : "") + "\n\n" + MAP_INSTRUCTION,
-          fallbackEnabled,
-          scenarioMeta
-        })
+      const res = await requestChatApi({
+        apiKey: apiKey,
+        model: selectedModel,
+        messages: apiMessages,
+        systemInstruction: gmRuleText + "\n\n" + scenarioText + (mapFileText ? "\n\n【初期マップ設定】\n" + mapFileText : "") + "\n\n" + MAP_INSTRUCTION,
+        fallbackEnabled,
+        scenarioMeta
       });
       const data = await res.json();
       if (res.ok) {
@@ -1886,12 +1972,7 @@ ${currentMapJson}
           }
         } else {
           console.error("JSON形式ではありませんでした:", data.text);
-          // サーバー（コマンドプロンプト）にエラーを飛ばす
-          fetch('/api/log', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: data.text, type: 'JSON_ERROR', command: commandType })
-          }).catch(() => { });
+          logClientViolation({ text: data.text, type: 'JSON_ERROR', command: commandType });
         }
       }
     } catch (err) {
@@ -1911,15 +1992,11 @@ ${currentMapJson}
   const handleGeneratePrompt = async (characterId: string, characterName: string) => {
     setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, isGenerating: true } : old));
     try {
-      const res = await fetch('/api/generate_avatar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          apiKey: apiKey,
-          characterName: characterName,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText,
-          messages: messages // 会話の文脈を追加
-        })
+      const res = await requestAvatarPromptApi({
+        apiKey: apiKey,
+        characterName: characterName,
+        systemInstruction: gmRuleText + "\n\n" + scenarioText,
+        messages: messages
       });
       const data = await res.json();
       if (res.ok && data.prompt) {
@@ -2144,23 +2221,19 @@ ${currentMapJson}
     supportAbortControllerRef.current = new AbortController();
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: supportAbortControllerRef.current.signal,
-        body: JSON.stringify({
-          apiKey,
-          model: selectedModel,
-          messages: [
-            supportContextMessage,
-            ...supportHistoryMessages,
-            ...(supportStoryProgressMessage ? [supportStoryProgressMessage] : []),
-            latestSupportRequestMessage,
-          ],
-          systemInstruction: supportInstruction,
-          fallbackEnabled,
-          assistantMode: 'support',
-        })
+      const res = await requestChatApi({
+        apiKey,
+        model: selectedModel,
+        messages: [
+          supportContextMessage,
+          ...supportHistoryMessages,
+          ...(supportStoryProgressMessage ? [supportStoryProgressMessage] : []),
+          latestSupportRequestMessage,
+        ],
+        systemInstruction: supportInstruction,
+        fallbackEnabled,
+        assistantMode: 'support',
+        abortSignal: supportAbortControllerRef.current.signal,
       });
       const data = await res.json();
 
@@ -2387,21 +2460,17 @@ ${currentMapJson}
     abortControllerRef.current = new AbortController();
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: abortControllerRef.current.signal,
-        body: JSON.stringify({
-          apiKey: apiKey,
-          model: selectedModel,
-          messages: newHistory,
-          systemInstruction: isGm
-            ? gmRuleText + "\n\n" + scenarioText + "\n\n【GM質問モード】\nあなたはこのシナリオのGMとして、プレイヤーからのメタな質問・相談に答えます。現在の本編を続けて描写してはいけません。scene_blocks 形式の出力や小説本文の続きではなく、質問への回答だけを簡潔に返してください。位置・時刻のステータス行も不要です。"
-            : gmRuleText + "\n\n" + scenarioText + "\n\n" + MAP_INSTRUCTION,
-          fallbackEnabled,
-          scenarioMeta,
-          assistantMode: isGm ? 'gm' : undefined,
-        })
+      const res = await requestChatApi({
+        apiKey: apiKey,
+        model: selectedModel,
+        messages: newHistory,
+        systemInstruction: isGm
+          ? gmRuleText + "\n\n" + scenarioText + "\n\n【GM質問モード】\nあなたはこのシナリオのGMとして、プレイヤーからのメタな質問・相談に答えます。現在の本編を続けて描写してはいけません。scene_blocks 形式の出力や小説本文の続きではなく、質問への回答だけを簡潔に返してください。位置・時刻のステータス行も不要です。"
+          : gmRuleText + "\n\n" + scenarioText + "\n\n" + MAP_INSTRUCTION,
+        fallbackEnabled,
+        scenarioMeta,
+        assistantMode: isGm ? 'gm' : undefined,
+        abortSignal: abortControllerRef.current.signal,
       });
       const data = await res.json();
       if (res.ok) {
@@ -2520,19 +2589,15 @@ ${currentMapJson}
 `;
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: abortControllerRef.current.signal,
-        body: JSON.stringify({
-          apiKey: apiKey,
-          model: selectedModel,
-          messages: newHistory,
-          isReviewMode: true,
-          systemInstruction: gmRuleText + "\n\n" + scenarioText + "\n\n" + REVIEW_SYSTEM_PROMPT,
-          fallbackEnabled,
-          scenarioMeta
-        })
+      const res = await requestChatApi({
+        apiKey: apiKey,
+        model: selectedModel,
+        messages: newHistory,
+        isReviewMode: true,
+        systemInstruction: gmRuleText + "\n\n" + scenarioText + "\n\n" + REVIEW_SYSTEM_PROMPT,
+        fallbackEnabled,
+        scenarioMeta,
+        abortSignal: abortControllerRef.current.signal,
       });
       const data = await res.json();
       if (res.ok) {
@@ -2576,21 +2641,17 @@ ${currentMapJson}
     abortControllerRef.current = new AbortController();
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: abortControllerRef.current.signal,
-        body: JSON.stringify({
-          apiKey: apiKey,
-          model: selectedModel,
-          messages: historyForRequest,
-          systemInstruction: isGmRegen
-            ? gmRuleText + "\n\n" + scenarioText + "\n\n【GM質問モード】\nあなたはこのシナリオのGMとして、プレイヤーからのメタな質問・相談に答えます。現在の本編を続けて描写してはいけません。scene_blocks 形式の出力や小説本文の続きではなく、質問への回答だけを簡潔に返してください。位置・時刻のステータス行も不要です。"
-            : gmRuleText + "\n\n" + scenarioText + "\n\n" + MAP_INSTRUCTION,
-          fallbackEnabled,
-          scenarioMeta,
-          assistantMode: isGmRegen ? 'gm' : undefined,
-        })
+      const res = await requestChatApi({
+        apiKey: apiKey,
+        model: selectedModel,
+        messages: historyForRequest,
+        systemInstruction: isGmRegen
+          ? gmRuleText + "\n\n" + scenarioText + "\n\n【GM質問モード】\nあなたはこのシナリオのGMとして、プレイヤーからのメタな質問・相談に答えます。現在の本編を続けて描写してはいけません。scene_blocks 形式の出力や小説本文の続きではなく、質問への回答だけを簡潔に返してください。位置・時刻のステータス行も不要です。"
+          : gmRuleText + "\n\n" + scenarioText + "\n\n" + MAP_INSTRUCTION,
+        fallbackEnabled,
+        scenarioMeta,
+        assistantMode: isGmRegen ? 'gm' : undefined,
+        abortSignal: abortControllerRef.current.signal,
       });
       const data = await res.json();
       if (res.ok) {
@@ -2697,7 +2758,7 @@ ${currentMapJson}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: isSidebarVariant ? '0.5rem' : '0' }}>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: isSidebarVariant ? '48px' : '56px', height: isSidebarVariant ? '48px' : '56px', borderRadius: '999px', objectFit: 'cover', border: '1px solid var(--border-color)' }} />
+            <img src={resolvePublicAssetPath(SUPPORT_AVATAR_PATH)} alt="ロア" style={{ width: isSidebarVariant ? '48px' : '56px', height: isSidebarVariant ? '48px' : '56px', borderRadius: '999px', objectFit: 'cover', border: '1px solid var(--border-color)' }} />
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '2px', fontSize: isSidebarVariant ? '1.05rem' : '1.2rem' }}>おたすけロアちゃん</h3>
@@ -2749,7 +2810,7 @@ ${currentMapJson}
                     <span style={{ fontWeight: 'bold' }}>あなた：<br /></span>
                   ) : (
                     <span style={{ fontWeight: 'bold', color: 'var(--text-main)', display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                      <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: '24px', height: '24px', borderRadius: '999px', objectFit: 'cover' }} />
+                      <img src={resolvePublicAssetPath(SUPPORT_AVATAR_PATH)} alt="ロア" style={{ width: '24px', height: '24px', borderRadius: '999px', objectFit: 'cover' }} />
                       ロア：
                     </span>
                   ))}
@@ -2825,7 +2886,7 @@ ${currentMapJson}
   if (gameState === 'WELCOME') {
     return (
       <div className={`${styles.welcomeContainer} fade-in`}>
-        <img src="/logo_yoko.png" alt="ChatNoir" className={styles.welcomeLogo} />
+        <img src={resolvePublicAssetPath(APP_LOGO_WIDE_PATH)} alt="ChatNoir" className={styles.welcomeLogo} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <button className={styles.welcomeBtn} onClick={() => { resetAllState(); setGameState('LOGIN'); }}>
             新しく入室する
@@ -2961,9 +3022,9 @@ ${currentMapJson}
           </div>
           <div style={{ width: '100%', marginBottom: '1.5rem', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {coverImage ? (
-              <img src={coverImage} alt="Cover" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'cover', display: 'block' }} />
+              <img src={resolvePublicAssetPath(coverImage)} alt="Cover" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'cover', display: 'block' }} />
             ) : (
-              <img src="/logo.png" alt="Chat;Noir" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'contain', display: 'block', padding: '2rem' }} />
+              <img src={resolvePublicAssetPath(APP_LOGO_PATH)} alt="Chat;Noir" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'contain', display: 'block', padding: '2rem' }} />
             )}
           </div>
 
@@ -2976,7 +3037,7 @@ ${currentMapJson}
                 {
                   title: '【サンプルシナリオ】歯車仕掛けの手紙',
                   isSample: true,
-                  coverImage: '/package.png',
+                  coverImage: DEFAULT_SAMPLE_COVER_PATH,
                   lastUpdated: new Date(0).toISOString() // 常に一番後ろにならないよう適宜調整
                 },
                 ...masterScenarios.sort((a, b) => new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime())
@@ -3019,7 +3080,7 @@ ${currentMapJson}
                   <div style={{ position: 'relative' }}>
                     {s.coverImage ? (
                       <img 
-                        src={s.coverImage} 
+                        src={resolvePublicAssetPath(s.coverImage)} 
                         alt={s.title} 
                         style={{ width: '120px', height: 'auto', borderRadius: '4px', border: scenarioTitle === s.title ? '2px solid #fff' : '1px solid #333', marginBottom: '6px', boxShadow: '0 4px 10px rgba(0,0,0,0.3)' }} 
                       />
@@ -3056,6 +3117,38 @@ ${currentMapJson}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
             />
+
+            <div style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: '8px', padding: '0.9rem 1rem', marginBottom: '0.9rem' }}>
+              <p style={{ fontSize: '0.76rem', color: '#111', marginBottom: '0.45rem', fontWeight: 700, letterSpacing: '0.6px' }}>
+                APIキーの保存について
+              </p>
+              <p style={{ fontSize: '0.72rem', color: '#444', lineHeight: 1.7, marginBottom: '0.55rem' }}>
+                入力したAPIキーは GitHub やこのサイトのセーブデータには保存されません。AI応答を作るときだけ、あなたのブラウザから Google API へ直接送信されます。
+              </p>
+              <p style={{ fontSize: '0.72rem', color: '#666', lineHeight: 1.7, margin: 0 }}>
+                共用PCでは「一時保存」をおすすめします。利用後にブラウザを閉じるとキーが消えます。
+              </p>
+            </div>
+
+            <div style={{ marginBottom: '0.9rem' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>APIキーの保存方法</label>
+              <select
+                value={apiKeyStorageMode}
+                onChange={(e) => {
+                  const nextMode = e.target.value;
+                  if (!isApiKeyStorageMode(nextMode)) return;
+                  setApiKeyStorageMode(nextMode);
+                  persistApiKey(apiKey, nextMode);
+                }}
+                style={{ width: '100%', padding: '0.8rem', background: 'rgba(255,255,255,0.5)', color: '#111', border: '1px solid rgba(0,0,0,0.15)', borderRadius: '2px', fontFamily: 'inherit' }}
+              >
+                <option value="session">一時保存: ブラウザを閉じると消える（推奨）</option>
+                <option value="local">この端末に保存: 次回も自動入力する</option>
+              </select>
+              <p style={{ fontSize: '0.72rem', color: '#666', lineHeight: 1.7, marginTop: '0.45rem', marginBottom: 0 }}>
+                一時保存は sessionStorage、端末保存は localStorage を使います。どちらもこのブラウザ内だけに保存されます。
+              </p>
+            </div>
 
             <select
               value={selectedModel}
@@ -3630,7 +3723,7 @@ ${currentMapJson}
 
               <button onClick={() => insertTags('「', '」')} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer' }}>「」セリフ</button>
               <button onClick={openSupportModal} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <img src={SUPPORT_AVATAR_PATH} alt="ロア" style={{ width: '18px', height: '18px', borderRadius: '999px', objectFit: 'cover' }} />
+                <img src={resolvePublicAssetPath(SUPPORT_AVATAR_PATH)} alt="ロア" style={{ width: '18px', height: '18px', borderRadius: '999px', objectFit: 'cover' }} />
                 ロアに相談する
               </button>
               <button onClick={() => setIsGmModalOpen(true)} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer' }}>GMに質問する</button>
