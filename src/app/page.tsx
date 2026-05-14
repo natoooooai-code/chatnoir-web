@@ -3064,7 +3064,7 @@ ${currentMapJson}
             >
               <option value="gemma-4-31b-it">Gemma 4 31B（推奨）</option>
               <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
-              <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash-Lite（軽量高速）</option>
+              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite（軽量高速）</option>
             </select>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
@@ -3608,7 +3608,7 @@ ${currentMapJson}
                       <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
                         <option value="gemma-4-31b-it">Gemma 4 31B</option>
                         <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
-                        <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash-Lite</option>
+                        <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
                       </select>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-main)' }}>フォールバック</span>

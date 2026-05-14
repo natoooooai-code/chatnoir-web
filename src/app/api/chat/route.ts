@@ -134,8 +134,15 @@ const normalizeGmPayload = (rawPayload: unknown): GmPayload => {
 const FALLBACK_CHAIN = [
   'gemma-4-31b-it',
   'gemma-4-26b-a4b-it',
-  'gemini-3.1-flash-lite-preview',
+  'gemini-3.1-flash-lite',
 ];
+
+const normalizeModelName = (model: string | null): string => {
+  if (model === 'gemini-3.1-flash-lite-preview') {
+    return 'gemini-3.1-flash-lite';
+  }
+  return model || 'gemini-3.1-flash-lite';
+};
 
 export async function POST(req: NextRequest) {
   try {
@@ -162,7 +169,7 @@ export async function POST(req: NextRequest) {
     const isSystemCommand = lastUserMessage.startsWith('（システムコマンド：');
 
     const ai = new GoogleGenAI({ apiKey });
-    const requestedModel = model || 'gemini-3.1-flash-lite-preview';
+  const requestedModel = normalizeModelName(model);
 
     // フォールバック時に試みるモデルのリストを生成
     const getModelsToTry = (selected: string, enableFallback: boolean): string[] => {
