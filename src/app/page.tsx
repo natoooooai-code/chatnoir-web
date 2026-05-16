@@ -2968,15 +2968,21 @@ ${currentMapJson}
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: isSidebarVariant ? '1.5rem' : '0' }}>
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <button onClick={() => sendSupportMessage(SUPPORT_SUGGESTION_PROMPT)} disabled={isSupportActionDisabled} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, fontSize: '0.85rem' }}>ロアにおまかせ</button>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.75rem', color: isAutoSupportMode ? 'var(--text-main)' : 'var(--text-muted)', userSelect: 'none' }} title="本編が更新されるたびに自動でロアにおまかせを実行します">
+            <button
+              type="button"
+              onClick={() => setIsAutoSupportMode(v => { const next = !v; try { localStorage.setItem('chatnoir_autoSupportMode', String(next)); } catch {} return next; })}
+              aria-pressed={isAutoSupportMode}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.75rem', color: isAutoSupportMode ? 'var(--text-main)' : 'var(--text-muted)', userSelect: 'none', background: 'transparent', border: 'none', padding: 0 }}
+              title="本編が更新されるたびに自動でロアにおまかせを実行します"
+            >
               <div
-                onClick={() => setIsAutoSupportMode(v => { const next = !v; try { localStorage.setItem('chatnoir_autoSupportMode', String(next)); } catch {} return next; })}
-                style={{ width: '32px', height: '18px', borderRadius: '9px', background: isAutoSupportMode ? 'var(--text-main)' : 'var(--border-color)', position: 'relative', transition: '0.2s', flexShrink: 0, cursor: 'pointer' }}
+                aria-hidden="true"
+                style={{ width: '32px', height: '18px', borderRadius: '9px', background: isAutoSupportMode ? 'var(--text-main)' : 'var(--border-color)', position: 'relative', transition: '0.2s', flexShrink: 0 }}
               >
                 <div style={{ position: 'absolute', top: '3px', left: isAutoSupportMode ? '17px' : '3px', width: '12px', height: '12px', borderRadius: '50%', background: isAutoSupportMode ? 'var(--bg-color)' : 'var(--text-muted)', transition: '0.2s' }} />
               </div>
               自動
-            </label>
+            </button>
             <button
               onClick={isScenarioDebugMode ? () => stopScenarioDebugMode() : () => startScenarioDebugMode()}
               disabled={!isScenarioDebugMode && (isLoading || isSupportLoading)}
@@ -3247,8 +3253,9 @@ ${currentMapJson}
             </div>
 
             <div style={{ marginBottom: '0.9rem' }}>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>APIキーの保存方法</label>
+              <label htmlFor="api-key-storage-mode" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>APIキーの保存方法</label>
               <select
+                id="api-key-storage-mode"
                 name="apiKeyStorageMode"
                 value={apiKeyStorageMode}
                 onChange={(e) => {
@@ -3267,7 +3274,9 @@ ${currentMapJson}
               </p>
             </div>
 
+            <label htmlFor="selected-model" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>AIモデル</label>
             <select
+              id="selected-model"
               name="selectedModel"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
@@ -3289,8 +3298,9 @@ ${currentMapJson}
             </div>
 
             <div style={{ marginTop: '1rem' }}>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>プロジェクト名（必須）</label>
+              <label htmlFor="save-name" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>プロジェクト名（必須）</label>
               <input
+                id="save-name"
                 type="text"
                 name="saveName"
                 className={styles.input}
@@ -3813,10 +3823,11 @@ ${currentMapJson}
                       <option value="klee">手書き風 (Klee One)</option>
                     </select>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '0.8rem', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between' }}>
+                      <label htmlFor="font-size" style={{ fontSize: '0.8rem', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between' }}>
                         文字サイズ: <span>{fontSize}px</span>
                       </label>
                       <input
+                        id="font-size"
                         type="range"
                         name="fontSize"
                         min="12"
