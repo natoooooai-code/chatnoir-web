@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ChatNoir Web
 
-## Getting Started
+ChatNoir Web is a static Next.js application for playing and testing AI-driven mystery scenarios in the browser.
 
-First, run the development server:
+## Overview
+
+- Built with Next.js static export for GitHub Pages deployment.
+- Uses the Gemini client SDK directly in the browser.
+- The user provides their own API key; no server-side key storage is required.
+- Includes a sample scenario and support assistant flow for local or static hosting use.
+
+## Requirements
+
+- Node.js 20 or later
+- npm
+- A Gemini API key for actual play
+
+## Local Development
+
+Install dependencies:
+
+```bash
+npm ci
+```
+
+Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000 in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Create a static export:
 
-## Learn More
+```bash
+npm run build
+```
 
-To learn more about Next.js, take a look at the following resources:
+The generated static site is written to the out directory.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- This app is designed for static hosting.
+- API keys are handled client-side in the browser.
+- Files under public are shipped as public assets when deployed.

@@ -962,6 +962,8 @@ export default function ChatNoir() {
   const [gmRuleText, setGmRuleText] = useState('');
   const [supportPersonaPath, setSupportPersonaPath] = useState(DEFAULT_SUPPORT_PERSONA_PATH);
   const [supportPersonaPrompt, setSupportPersonaPrompt] = useState('');
+  const [supportPersonaLoadError, setSupportPersonaLoadError] = useState<string | null>(null);
+  const [supportPersonaReloadVersion, setSupportPersonaReloadVersion] = useState(0);
   const [isCustomGmRule, setIsCustomGmRule] = useState(false);
   const [scenarioText, setScenarioText] = useState('');
   const [briefingText, setBriefingText] = useState('');
@@ -1008,6 +1010,16 @@ export default function ChatNoir() {
   }, [activeCharacterOptions]);
 
   const [openSections, setOpenSections] = useState<SidebarOpenSections>(() => ({ ...DEFAULT_OPEN_SECTIONS }));
+
+  const isSupportPersonaReady = supportPersonaPrompt.trim().length > 0 && !supportPersonaLoadError;
+  const isSupportPersonaLoading = !supportPersonaLoadError && !isSupportPersonaReady;
+  const isSupportActionDisabled = isSupportLoading || isScenarioDebugMode || !isSupportPersonaReady;
+
+  const reloadSupportPersonaPrompt = () => {
+    setSupportPersonaPrompt('');
+    setSupportPersonaLoadError(null);
+    setSupportPersonaReloadVersion((prev) => prev + 1);
+  };
 
   const currentNodeLabel = useMemo(() => getMapNodeLabel(mapLayers, currentPos), [mapLayers, currentPos]);
   const scenarioSetupReadyCount = [
@@ -1207,7 +1219,7 @@ export default function ChatNoir() {
     setMonologueData([]);
     setGmRuleText('');
     setSupportPersonaPath(DEFAULT_SUPPORT_PERSONA_PATH);
-    setSupportPersonaPrompt('');
+    reloadSupportPersonaPrompt();
     setIsCustomGmRule(false);
     setScenarioText('');
     setBriefingText('');
@@ -1275,6 +1287,9 @@ export default function ChatNoir() {
     setMessages(parsed.messages || []);
     setGmRuleText(parsed.gmRuleText || '');
     setSupportPersonaPath(parsed.supportPersonaPath || DEFAULT_SUPPORT_PERSONA_PATH);
+    setSupportPersonaPrompt('');
+    setSupportPersonaLoadError(null);
+    setSupportPersonaReloadVersion((prev) => prev + 1);
     setScenarioText(parsed.scenarioText || '');
     setBriefingText(parsed.briefingText || '');
     setPrologueText(parsed.prologueText || '');
@@ -1332,13 +1347,44 @@ export default function ChatNoir() {
   }, [gameState, isLoaded]);
 
   useEffect(() => {
-    fetch(resolvePublicAssetPath(supportPersonaPath), { cache: 'no-store' })
-      .then(r => r.text())
-      .then(text => {
-        setSupportPersonaPrompt(text);
-      })
-      .catch(() => {});
-  }, [supportPersonaPath]);
+    let isCancelled = false;
+
+    const loadSupportPersonaPrompt = async () => {
+      if (!isCancelled) {
+        setSupportPersonaPrompt('');
+        setSupportPersonaLoadError(null);
+      }
+
+      try {
+        const response = await fetch(resolvePublicAssetPath(supportPersonaPath), { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Failed to load support persona: ${response.status}`);
+        }
+
+        const text = (await response.text()).trim();
+        if (!text) {
+          throw new Error('Support persona prompt is empty');
+        }
+
+        if (!isCancelled) {
+          setSupportPersonaPrompt(text);
+          setSupportPersonaLoadError(null);
+        }
+      } catch (error) {
+        console.warn('おたすけロアちゃんの人格プロンプト読み込みに失敗しました。support-personas/lore-support.md を確認してください。', error);
+        if (!isCancelled) {
+          setSupportPersonaPrompt('');
+          setSupportPersonaLoadError('support-personas/lore-support.md を読み込めませんでした。');
+        }
+      }
+    };
+
+    loadSupportPersonaPrompt();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [supportPersonaPath, supportPersonaReloadVersion]);
 
   // マウント時に保存されたキー・オートセーブを読み込む
   useEffect(() => {
@@ -2184,9 +2230,20 @@ ${currentMapJson}
     setIsSupportSidebarOpen(false);
   };
 
-  const sendSupportMessage = async (overrideText?: string): Promise<SupportResponseResult | null> => {
+  const sendSupportMessage = async (overrideText?: string, options: { suppressPersonaNotice?: boolean } = {}): Promise<SupportResponseResult | null> => {
     const textToSend = overrideText !== undefined ? overrideText : (supportInputRef.current?.getCurrentText() ?? '');
+    const suppressPersonaNotice = options.suppressPersonaNotice === true;
     if (!textToSend.trim() || isSupportLoading) return null;
+
+    if (!isSupportPersonaReady) {
+      if (!suppressPersonaNotice) {
+        showToast(isSupportPersonaLoading
+          ? 'ロア人格プロンプトを読み込み中です。少し待ってから相談してください。'
+          : 'support-personas/lore-support.md を読めません。ファイルを確認して再読込してください。');
+      }
+      return null;
+    }
+
     const isScenarioDebugRequest = overrideText === SCENARIO_DEBUG_PROMPT;
     const previousSupportMessages = latestSupportMessagesRef.current;
     const previousSupportStorySnapshots = latestSupportStorySnapshotsRef.current;
@@ -2204,7 +2261,7 @@ ${currentMapJson}
     const supportStoryProgressMessage = buildSupportStoryProgressMessage(currentSupportStorySnapshot);
     const latestSupportRequestMessage: AppMessage = { role: 'user', parts: [{ text: `【今回の最新相談】\n${textToSend}` }] };
     const supportInstruction = [
-      supportPersonaPrompt || 'あなたはプレイヤー支援AIです。プレイヤーが既に知っている情報だけを使い、ネタバレなしで次の入力候補を提案してください。',
+      supportPersonaPrompt,
       '過去のロアの回答をそのまま繰り返さず、現在の相談に合わせて必要な差分や更新を加えてください。',
       '本編差分が与えられている場合は、前回相談以降に本編で何が進展したかを先に整理してから回答してください。'
     ].join('\n\n');
@@ -2295,7 +2352,18 @@ ${currentMapJson}
     const debugSessionId = scenarioDebugSessionRef.current;
     if (!isScenarioDebugModeRef.current || isSupportLoading) return;
 
-    const supportResult = await sendSupportMessage(SCENARIO_DEBUG_PROMPT);
+    if (!isSupportPersonaReady) {
+      stopScenarioDebugMode({
+        showToast: false,
+        abortRequests: false,
+      });
+      showToast(isSupportPersonaLoading
+        ? 'ロア人格プロンプトの読み込み完了前のため、シナリオデバッグモードを停止しました'
+        : 'support-personas/lore-support.md を読めないため、シナリオデバッグモードを停止しました');
+      return;
+    }
+
+    const supportResult = await sendSupportMessage(SCENARIO_DEBUG_PROMPT, { suppressPersonaNotice: true });
 
     if (!isScenarioDebugModeRef.current || debugSessionId !== scenarioDebugSessionRef.current) {
       return;
@@ -2497,8 +2565,8 @@ ${currentMapJson}
             showToast('シナリオデバッグモードを停止しました。エンディングに到達しました');
           } else if (isScenarioDebugModeRef.current) {
             void runScenarioDebugStep();
-          } else if (isAutoSupportMode) {
-            void sendSupportMessage(SUPPORT_SUGGESTION_PROMPT);
+          } else if (isAutoSupportMode && isSupportPersonaReady) {
+            void sendSupportMessage(SUPPORT_SUGGESTION_PROMPT, { suppressPersonaNotice: true });
           }
         }
       } else {
@@ -2834,6 +2902,15 @@ ${currentMapJson}
                 </div>
               </div>
             )}
+            {isSupportPersonaLoading && (
+              <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)', textAlign: 'center', flexShrink: 0 }}>ロア人格プロンプトを読み込み中です……</p>
+            )}
+            {supportPersonaLoadError && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', background: 'rgba(0,0,0,0.08)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.75rem 0.9rem', flexShrink: 0 }}>
+                <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>{supportPersonaLoadError}</p>
+                <button onClick={reloadSupportPersonaPrompt} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.45rem 0.8rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.78rem' }}>再読込</button>
+              </div>
+            )}
             {isSupportLoading && (
               <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.9rem', textAlign: 'center' }}>ロアが次の一手を考えています……</p>
             )}
@@ -2843,13 +2920,19 @@ ${currentMapJson}
         <ChatInput
           ref={supportInputRef}
           onSend={() => sendSupportMessage()}
-          disabled={isSupportLoading || isScenarioDebugMode}
+          disabled={isSupportActionDisabled}
           style={{ width: '100%', minHeight: '72px', maxHeight: '140px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit', flexShrink: 0 }}
-          placeholder={isScenarioDebugMode ? 'シナリオデバッグモード中です。停止すると手動で相談できます。' : '例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて'}
+          placeholder={isScenarioDebugMode
+            ? 'シナリオデバッグモード中です。停止すると手動で相談できます。'
+            : isSupportPersonaLoading
+              ? 'ロア人格プロンプトを読み込み中です。'
+              : supportPersonaLoadError
+                ? 'support-personas/lore-support.md を確認して再読込してください。'
+                : '例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて'}
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: isSidebarVariant ? '1.5rem' : '0' }}>
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <button onClick={() => sendSupportMessage(SUPPORT_SUGGESTION_PROMPT)} disabled={isSupportLoading || isScenarioDebugMode} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: '4px', cursor: (isSupportLoading || isScenarioDebugMode) ? 'not-allowed' : 'pointer', opacity: (isSupportLoading || isScenarioDebugMode) ? 0.5 : 1, fontSize: '0.85rem' }}>ロアにおまかせ</button>
+            <button onClick={() => sendSupportMessage(SUPPORT_SUGGESTION_PROMPT)} disabled={isSupportActionDisabled} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, fontSize: '0.85rem' }}>ロアにおまかせ</button>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.75rem', color: isAutoSupportMode ? 'var(--text-main)' : 'var(--text-muted)', userSelect: 'none' }} title="本編が更新されるたびに自動でロアにおまかせを実行します">
               <div
                 onClick={() => setIsAutoSupportMode(v => { const next = !v; try { localStorage.setItem('chatnoir_autoSupportMode', String(next)); } catch {} return next; })}
@@ -2877,7 +2960,7 @@ ${currentMapJson}
               {isScenarioDebugMode ? 'デバッグ停止' : 'シナリオデバッグ開始'}
             </button>
           </div>
-          <button onClick={() => { const t = supportInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { supportInputRef.current?.clear(); sendSupportMessage(t); } }} disabled={isSupportLoading || isScenarioDebugMode} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: (isSupportLoading || isScenarioDebugMode) ? 'not-allowed' : 'pointer', opacity: (isSupportLoading || isScenarioDebugMode) ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
+          <button onClick={() => { const t = supportInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { supportInputRef.current?.clear(); sendSupportMessage(t); } }} disabled={isSupportActionDisabled} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
         </div>
       </div>
     );
