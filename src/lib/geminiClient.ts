@@ -93,6 +93,12 @@ const getErrorMessage = (error: unknown): string => {
   return 'Internal Server Error';
 };
 
+const summarizeForLog = (text: string, maxLength = 140): string => {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}...`;
+};
+
 const isAbortError = (error: unknown): boolean => {
   if (error instanceof DOMException) return error.name === 'AbortError';
   return error instanceof Error && error.name === 'AbortError';
@@ -326,6 +332,13 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
   const { generateWithFallback, modelsToTry } = createChatGenerator(ai, requestedModel, request.fallbackEnabled === true, request.abortSignal);
 
   if (request.assistantMode === 'support') {
+    const startedAt = Date.now();
+    const supportRequestSummary = summarizeForLog(lastUserMessage.replace(/^【今回の最新相談】\s*/u, ''));
+    console.log(`\n💬 [おたすけロアちゃん開始] モデル候補: ${modelsToTry.join(' -> ')}`);
+    if (supportRequestSummary) {
+      console.log(`📝 [相談内容] ${supportRequestSummary}`);
+    }
+
     const supportSchema = {
       type: 'object',
       properties: {
@@ -348,7 +361,7 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
       required: ['reply', 'action']
     };
 
-    const { result: response } = await generateWithFallback((model) => withAbort(ai.models.generateContent({
+    const { result: response, usedModel } = await generateWithFallback((model) => withAbort(ai.models.generateContent({
       model,
       contents: messages,
       config: {
@@ -377,6 +390,9 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
     } catch (error) {
       console.error('Support JSON parse error:', response.text, error);
     }
+
+    console.log(`✅ [おたすけロアちゃん完了] 処理時間: ${Math.round((Date.now() - startedAt) / 1000)}秒 / 使用モデル: ${usedModel}`);
+    console.log(`📦 [おたすけロアちゃん応答] 提案数: ${Array.isArray(supportPayload.suggestions) ? Math.min(supportPayload.suggestions.length, 3) : 0}`);
 
     return {
       text: supportPayload.reply || '',
