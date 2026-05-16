@@ -99,6 +99,63 @@ const summarizeForLog = (text: string, maxLength = 140): string => {
   return `${normalized.slice(0, maxLength)}...`;
 };
 
+const toSupportPayload = (record: UnknownRecord): SupportPayload => {
+  const rawSuggestions = record.suggestions;
+  return {
+    reply: getString(record, 'reply'),
+    action: getString(record, 'action'),
+    suggestions: Array.isArray(rawSuggestions)
+      ? rawSuggestions.filter((suggestion): suggestion is string => typeof suggestion === 'string')
+      : undefined
+  };
+};
+
+const tryParseEmbeddedSupportPayload = (text: string): SupportPayload | null => {
+  const jsonStart = text.indexOf('{');
+  const jsonEnd = text.lastIndexOf('}');
+
+  if (jsonStart === -1 || jsonEnd <= jsonStart) return null;
+
+  try {
+    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as unknown;
+    if (!isRecord(parsed)) return null;
+    return toSupportPayload(parsed);
+  } catch {
+    return null;
+  }
+};
+
+const sanitizeSupportText = (value: string | undefined, field: 'reply' | 'action'): string | undefined => {
+  if (!value) return value;
+
+  const embeddedPayload = tryParseEmbeddedSupportPayload(value);
+  const embeddedValue = embeddedPayload?.[field];
+  const source = typeof embeddedValue === 'string' && embeddedValue.trim().length > 0 ? embeddedValue : value;
+
+  const normalized = source
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .replace(/a single parseable JSON array\./gi, ' ')
+    .replace(/Do not include any extra text outside of the JSON string\./gi, ' ')
+    .replace(/\s*\/n\s*/gi, ' ')
+    .replace(/\/\/\s*/g, ' ')
+    .replace(/\{\s*"(?:reply|action|suggestions)"[\s\S]*$/i, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return normalized || undefined;
+};
+
+const sanitizeSupportSuggestions = (suggestions: string[] | undefined): string[] | undefined => {
+  if (!suggestions) return undefined;
+
+  const sanitized = suggestions
+    .map((suggestion) => sanitizeSupportText(suggestion, 'action') ?? '')
+    .filter((suggestion) => suggestion.length > 0);
+
+  return sanitized.length > 0 ? sanitized : undefined;
+};
+
 const isAbortError = (error: unknown): boolean => {
   if (error instanceof DOMException) return error.name === 'AbortError';
   return error instanceof Error && error.name === 'AbortError';
@@ -214,13 +271,15 @@ const normalizeScenarioMeta = (rawScenarioMeta: unknown): GeminiScenarioMeta => 
 const normalizeSupportPayload = (rawPayload: unknown): SupportPayload => {
   if (!isRecord(rawPayload)) return {};
 
-  const rawSuggestions = rawPayload.suggestions;
+  const directPayload = toSupportPayload(rawPayload);
+  const embeddedPayload = [directPayload.reply, directPayload.action, ...(directPayload.suggestions ?? [])]
+    .map((candidate) => candidate ? tryParseEmbeddedSupportPayload(candidate) : null)
+    .find((candidate): candidate is SupportPayload => Boolean(candidate));
+
   return {
-    reply: getString(rawPayload, 'reply'),
-    action: getString(rawPayload, 'action'),
-    suggestions: Array.isArray(rawSuggestions)
-      ? rawSuggestions.filter((suggestion): suggestion is string => typeof suggestion === 'string')
-      : undefined
+    reply: sanitizeSupportText(embeddedPayload?.reply ?? directPayload.reply, 'reply'),
+    action: sanitizeSupportText(embeddedPayload?.action ?? directPayload.action, 'action'),
+    suggestions: sanitizeSupportSuggestions(embeddedPayload?.suggestions ?? directPayload.suggestions)
   };
 };
 
