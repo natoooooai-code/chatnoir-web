@@ -35,6 +35,8 @@ const DEFAULT_SUPPORT_PERSONA_PATH = 'support-personas/lore-support.md';
 const DEFAULT_SAMPLE_COVER_PATH = 'package.png';
 const APP_LOGO_PATH = 'logo.png';
 const APP_LOGO_WIDE_PATH = 'logo_yoko.png';
+const REPOSITORY_NAME = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? '';
+const BUILD_TIME_BASE_PATH = process.env.GITHUB_ACTIONS === 'true' && REPOSITORY_NAME ? `/${REPOSITORY_NAME}` : '';
 const SUPPORT_SUGGESTION_PROMPT = '今の状況で次に入力すると良さそうな文を3つ提案して。';
 const SCENARIO_DEBUG_PROMPT = [
   'あなたはプレイヤーの代わりに、次に送る入力を1つだけ決めてください。',
@@ -44,6 +46,10 @@ const SUPPORT_HISTORY_MAX_MESSAGES = 18;
 const SUPPORT_HISTORY_MAX_CHARS = 12000;
 
 const resolveRuntimeBasePath = (): string => {
+  if (BUILD_TIME_BASE_PATH) {
+    return BUILD_TIME_BASE_PATH;
+  }
+
   if (typeof window === 'undefined') return '';
 
   if (!window.location.hostname.endsWith('github.io')) {
