@@ -19,6 +19,28 @@ import {
 } from '@/lib/mapGraph';
 import styles from './page.module.css';
 
+type AppAlertState = {
+  title: string;
+  message: string;
+};
+
+type AppConfirmState = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  danger?: boolean;
+};
+
+type AppPromptState = {
+  title: string;
+  message: string;
+  value: string;
+  placeholder: string;
+  confirmLabel: string;
+  cancelLabel: string;
+};
+
 // --- SVG Icons ---
 const IconImage = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', marginBottom: '-3px' }}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>;
 const IconFile = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', marginBottom: '-3px' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>;
@@ -1018,8 +1040,14 @@ export default function ChatNoir() {
 
   // トーストUI
   const [toastMsg, setToastMsg] = useState('');
+  const [appAlert, setAppAlert] = useState<AppAlertState | null>(null);
+  const [appConfirm, setAppConfirm] = useState<AppConfirmState | null>(null);
+  const [appPrompt, setAppPrompt] = useState<AppPromptState | null>(null);
   const [autoSaves, setAutoSaves] = useState<AutoSaveMeta[]>([]);
   const [masterScenarios, setMasterScenarios] = useState<ScenarioMasterData[]>([]);
+  const confirmResolverRef = useRef<((value: boolean) => void) | null>(null);
+  const promptResolverRef = useRef<((value: string | null) => void) | null>(null);
+  const promptInputRef = useRef<HTMLInputElement>(null);
 
   // 起動時に保存データを取得
   useEffect(() => {
@@ -1054,6 +1082,171 @@ export default function ChatNoir() {
   const isSupportPersonaReady = supportPersonaPrompt.trim().length > 0 && !supportPersonaLoadError;
   const isSupportPersonaLoading = !supportPersonaLoadError && !isSupportPersonaReady;
   const isSupportActionDisabled = isSupportLoading || isScenarioDebugMode || !isSupportPersonaReady;
+
+  useEffect(() => {
+    if (!appAlert && !appConfirm && !appPrompt) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+
+      if (appPrompt) {
+        const resolve = promptResolverRef.current;
+        promptResolverRef.current = null;
+        setAppPrompt(null);
+        resolve?.(null);
+        return;
+      }
+
+      if (appConfirm) {
+        const resolve = confirmResolverRef.current;
+        confirmResolverRef.current = null;
+        setAppConfirm(null);
+        resolve?.(false);
+        return;
+      }
+
+      if (appAlert) {
+        setAppAlert(null);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [appAlert, appConfirm, appPrompt]);
+
+  useEffect(() => {
+    if (!appPrompt) return;
+
+    const timerId = window.setTimeout(() => {
+      promptInputRef.current?.focus();
+      promptInputRef.current?.select();
+    }, 0);
+
+    return () => window.clearTimeout(timerId);
+  }, [Boolean(appPrompt)]);
+
+  const showAppAlert = (message: string, title = 'お知らせ') => {
+    setAppAlert({ title, message });
+  };
+
+  const closeAppAlert = () => {
+    setAppAlert(null);
+  };
+
+  const showAppConfirm = (
+    message: string,
+    options: Partial<Omit<AppConfirmState, 'message'>> = {},
+  ) => {
+    return new Promise<boolean>((resolve) => {
+      confirmResolverRef.current?.(false);
+      confirmResolverRef.current = resolve;
+      setAppConfirm({
+        title: options.title ?? '確認',
+        message,
+        confirmLabel: options.confirmLabel ?? 'OK',
+        cancelLabel: options.cancelLabel ?? 'キャンセル',
+        danger: options.danger ?? false,
+      });
+    });
+  };
+
+  const closeAppConfirm = (result: boolean) => {
+    const resolve = confirmResolverRef.current;
+    confirmResolverRef.current = null;
+    setAppConfirm(null);
+    resolve?.(result);
+  };
+
+  const showAppPrompt = (
+    message: string,
+    initialValue = '',
+    options: Partial<Omit<AppPromptState, 'message' | 'value'>> = {},
+  ) => {
+    return new Promise<string | null>((resolve) => {
+      promptResolverRef.current?.(null);
+      promptResolverRef.current = resolve;
+      setAppPrompt({
+        title: options.title ?? '入力',
+        message,
+        value: initialValue,
+        placeholder: options.placeholder ?? '',
+        confirmLabel: options.confirmLabel ?? 'OK',
+        cancelLabel: options.cancelLabel ?? 'キャンセル',
+      });
+    });
+  };
+
+  const closeAppPrompt = (result: string | null) => {
+    const resolve = promptResolverRef.current;
+    promptResolverRef.current = null;
+    setAppPrompt(null);
+    resolve?.(result);
+  };
+
+  const renderGlobalModals = () => (
+    <>
+      {appAlert && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px', backdropFilter: 'blur(6px)' }}>
+          <div className="fade-in" style={{ width: '100%', maxWidth: '520px', background: 'var(--sidebar-bg, rgba(250,250,250,0.96))', border: '1px solid var(--border-color, rgba(0,0,0,0.15))', borderRadius: '12px', boxShadow: '0 18px 48px rgba(0,0,0,0.38)', padding: '1.4rem 1.4rem 1.2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, color: 'var(--text-main, #111)', fontSize: '1rem', letterSpacing: '1.6px' }}>{appAlert.title}</h3>
+                <p style={{ margin: '0.45rem 0 0', color: 'var(--text-main, #111)', fontSize: '0.92rem', lineHeight: 1.75, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text' }}>{appAlert.message}</p>
+              </div>
+              <button onClick={closeAppAlert} aria-label="閉じる" style={{ background: 'transparent', border: 'none', color: 'var(--text-muted, #666)', fontSize: '1.2rem', cursor: 'pointer', lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={closeAppAlert} style={{ background: 'var(--text-main, #111)', color: 'var(--bg-color, #fff)', border: 'none', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px', fontWeight: 700 }}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {appConfirm && (
+        <div onClick={() => closeAppConfirm(false)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px', backdropFilter: 'blur(6px)' }}>
+          <div className="fade-in" onClick={(event) => event.stopPropagation()} style={{ width: '100%', maxWidth: '520px', background: 'var(--sidebar-bg, rgba(250,250,250,0.96))', border: '1px solid var(--border-color, rgba(0,0,0,0.15))', borderRadius: '12px', boxShadow: '0 18px 48px rgba(0,0,0,0.38)', padding: '1.4rem 1.4rem 1.2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div>
+              <h3 style={{ margin: 0, color: 'var(--text-main, #111)', fontSize: '1rem', letterSpacing: '1.6px' }}>{appConfirm.title}</h3>
+              <p style={{ margin: '0.55rem 0 0', color: 'var(--text-main, #111)', fontSize: '0.92rem', lineHeight: 1.75, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{appConfirm.message}</p>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button onClick={() => closeAppConfirm(false)} style={{ background: 'transparent', color: 'var(--text-main, #111)', border: '1px solid var(--border-color, rgba(0,0,0,0.15))', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px' }}>{appConfirm.cancelLabel}</button>
+              <button onClick={() => closeAppConfirm(true)} style={{ background: appConfirm.danger ? '#b91c1c' : 'var(--text-main, #111)', color: '#fff', border: 'none', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px', fontWeight: 700 }}>{appConfirm.confirmLabel}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {appPrompt && (
+        <div onClick={() => closeAppPrompt(null)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px', backdropFilter: 'blur(6px)' }}>
+          <div className="fade-in" onClick={(event) => event.stopPropagation()} style={{ width: '100%', maxWidth: '520px', background: 'var(--sidebar-bg, rgba(250,250,250,0.96))', border: '1px solid var(--border-color, rgba(0,0,0,0.15))', borderRadius: '12px', boxShadow: '0 18px 48px rgba(0,0,0,0.38)', padding: '1.4rem 1.4rem 1.2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div>
+              <h3 style={{ margin: 0, color: 'var(--text-main, #111)', fontSize: '1rem', letterSpacing: '1.6px' }}>{appPrompt.title}</h3>
+              <p style={{ margin: '0.55rem 0 0', color: 'var(--text-main, #111)', fontSize: '0.92rem', lineHeight: 1.75, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{appPrompt.message}</p>
+            </div>
+            <input
+              ref={promptInputRef}
+              type="text"
+              value={appPrompt.value}
+              placeholder={appPrompt.placeholder}
+              onChange={(event) => setAppPrompt((prev) => prev ? { ...prev, value: event.target.value } : prev)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  closeAppPrompt(appPrompt.value);
+                }
+              }}
+              style={{ width: '100%', background: 'var(--chat-input-bg, rgba(255,255,255,0.92))', color: 'var(--text-main, #111)', border: '1px solid var(--border-color, rgba(0,0,0,0.15))', padding: '0.9rem 1rem', borderRadius: '8px', fontSize: '0.95rem', fontFamily: 'inherit' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button onClick={() => closeAppPrompt(null)} style={{ background: 'transparent', color: 'var(--text-main, #111)', border: '1px solid var(--border-color, rgba(0,0,0,0.15))', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px' }}>{appPrompt.cancelLabel}</button>
+              <button onClick={() => closeAppPrompt(appPrompt.value)} style={{ background: 'var(--text-main, #111)', color: 'var(--bg-color, #fff)', border: 'none', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px', fontWeight: 700 }}>{appPrompt.confirmLabel}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 
   const reloadSupportPersonaPrompt = () => {
     setSupportPersonaPrompt('');
@@ -1761,21 +1954,21 @@ export default function ChatNoir() {
         }
       }
     } catch {
-      alert('サンプルシナリオの読み込みに失敗しました。');
+      showAppAlert('サンプルシナリオの読み込みに失敗しました。');
     }
   };
 
   const handleStartLogin = () => {
     if (apiKey.trim() === '' || !scenarioText || !prologueText || !briefingText) {
-      alert("必須項目（APIキー、設定ファイル、プロローグ、概要ファイル）をすべてセットしてください！");
+      showAppAlert("必須項目（APIキー、設定ファイル、プロローグ、概要ファイル）をすべてセットしてください！");
       return;
     }
     if (!hasRequiredScenarioMeta(scenarioMeta)) {
-      alert('メタデータの主人公名と一人称を読み込めていません。メタデータファイルをアップロードしてください。');
+      showAppAlert('メタデータの主人公名と一人称を読み込めていません。メタデータファイルをアップロードしてください。');
       return;
     }
     if (!saveName.trim()) {
-      alert("プロジェクト名を入力してください");
+      showAppAlert("プロジェクト名を入力してください");
       return;
     }
     persistApiKey(apiKey, apiKeyStorageMode);
@@ -2102,7 +2295,7 @@ ${currentMapJson}
       const msg = isOverloaded
         ? "【お知らせ】現在AIが非常に混み合っており、情報の更新に失敗しました。少し時間をおいてから、再度「更新」ボタンを押してみてください。"
         : "情報の取得・解析に失敗しました。一時的な通信エラーの可能性があります。";
-      alert(msg);
+      showAppAlert(msg);
     } finally {
       setIsLoading(false);
       setIsSidebarUpdating(false);
@@ -2125,16 +2318,16 @@ ${currentMapJson}
           await navigator.clipboard.writeText(data.prompt);
           showToast("プロンプトをクリップボードにコピーしました！");
         } catch {
-          alert("プロンプト:\n" + data.prompt);
+          showAppAlert(data.prompt, '生成されたプロンプト');
         }
         setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, isGenerating: false, lastPrompt: data.prompt } : old));
       } else {
         setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, isGenerating: false } : old));
-        alert("生成に失敗しました: " + (data.error || '不明なエラー'));
+        showAppAlert("生成に失敗しました: " + (data.error || '不明なエラー'));
       }
     } catch {
       setCharactersData(curr => curr.map(old => getCharacterIdentity(old) === characterId ? { ...old, isGenerating: false } : old));
-      alert("通信エラーが発生しました");
+      showAppAlert("通信エラーが発生しました");
     }
   };
 
@@ -2398,7 +2591,7 @@ ${currentMapJson}
         };
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
-        alert('サポートAIの応答に失敗しました: ' + errorStr);
+        showAppAlert('サポートAIの応答に失敗しました: ' + errorStr);
         setSupportMessagesState(previousSupportMessages);
         setSupportStorySnapshotsState(previousSupportStorySnapshots);
         if (overrideText === undefined) {
@@ -2409,7 +2602,7 @@ ${currentMapJson}
     } catch (err: unknown) {
       if (!isAbortError(err)) {
         console.error(err);
-        alert('サポートAIとの通信に失敗しました。');
+        showAppAlert('サポートAIとの通信に失敗しました。');
       }
       setSupportMessagesState(previousSupportMessages);
       setSupportStorySnapshotsState(previousSupportStorySnapshots);
@@ -2521,7 +2714,7 @@ ${currentMapJson}
       showToast('セーブデータをダウンロード保存しました');
       setShowSettings(false);
     } catch {
-      alert("セーブに失敗しました");
+      showAppAlert("セーブに失敗しました");
     }
   };
 
@@ -2539,7 +2732,7 @@ ${currentMapJson}
         showToast('セーブデータを復元しました');
         setShowSettings(false);
       } catch {
-        alert("ロードに失敗しました。ファイル形式が不正です。");
+        showAppAlert("ロードに失敗しました。ファイル形式が不正です。");
       }
     };
     input.click();
@@ -2556,7 +2749,7 @@ ${currentMapJson}
 
   const handleDeleteSave = async (key: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm(`「${key.replace('auto_save_', '')}」のセーブデータを削除しますか？`)) {
+    if (await showAppConfirm(`「${key.replace('auto_save_', '')}」のセーブデータを削除しますか？`, { title: 'セーブデータを削除', confirmLabel: '削除する', danger: true })) {
       await deleteFromIDB(key);
       setAutoSaves(metas => metas.filter(m => m.key !== key));
       showToast('セーブデータを削除しました');
@@ -2652,7 +2845,7 @@ ${currentMapJson}
         const msg = isOverloaded
           ? "【ご案内】現在、AIサーバーが一時的に非常に混み合っています。自動リトライを行いましたが解決しませんでした。数十秒ほど待ってから、もう一度送信してみてください。"
           : "エラーが発生しました: " + errorStr;
-        alert(msg);
+        showAppAlert(msg);
         
         // 再送処理：履歴からユーザー発言を取り除き、入力欄に戻す
         latestMessagesRef.current = previousMessages;
@@ -2673,7 +2866,7 @@ ${currentMapJson}
         console.log("出力が中断されました");
       } else {
         console.error(err);
-        alert("通信に失敗しました。");
+        showAppAlert("通信に失敗しました。");
       }
       
       // 再送処理
@@ -2745,14 +2938,14 @@ ${currentMapJson}
         setReviewMessages([...newHistory, nextReviewMessage]);
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
-        alert("エラーが発生しました: " + errorStr);
+        showAppAlert("エラーが発生しました: " + errorStr);
         setReviewMessages(baseHistory);
         if (!isInitial) setReviewInputText(prompt);
       }
     } catch (err: unknown) {
       if (!isAbortError(err)) {
         console.error(err);
-        alert("通信に失敗しました。");
+        showAppAlert("通信に失敗しました。");
       }
       setReviewMessages(baseHistory);
       if (!isInitial) setReviewInputText(prompt);
@@ -2805,12 +2998,12 @@ ${currentMapJson}
         latestMessagesRef.current = capturedMessages;
         setMessages(capturedMessages);
         const errStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
-        alert('再生成に失敗しました: ' + errStr);
+        showAppAlert('再生成に失敗しました: ' + errStr);
       }
     } catch (err: unknown) {
       latestMessagesRef.current = capturedMessages;
       setMessages(capturedMessages);
-      if (!isAbortError(err)) alert('再生成中にエラーが発生しました。');
+      if (!isAbortError(err)) showAppAlert('再生成中にエラーが発生しました。');
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
@@ -3061,6 +3254,7 @@ ${currentMapJson}
             ファイルからロード
           </button>
         </div>
+        {renderGlobalModals()}
       </div>
     );
   }
@@ -3095,7 +3289,7 @@ ${currentMapJson}
                     onClick={async (e) => {
                       e.stopPropagation();
                       const currentName = meta.saveName || meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, '');
-                      const newName = prompt('セーブデータの名前を入力してください：', currentName);
+                      const newName = await showAppPrompt('セーブデータの名前を入力してください。', currentName, { title: 'セーブ名を変更', confirmLabel: '保存する' });
                       if (newName && newName.trim()) {
                         const data = await loadFromIDB<StoredGameState>(meta.key);
                         if (data) {
@@ -3134,6 +3328,7 @@ ${currentMapJson}
           )}
 
         </div>
+        {renderGlobalModals()}
       </div>
     );
   }
@@ -3486,7 +3681,7 @@ ${currentMapJson}
                       setScenarioMeta((prev) => mergeScenarioMetaData(prev, extractedScenarioMeta));
                       showToast('メタデータを読み込みました');
                     } else {
-                      alert('ファイル内のメタデータから主人公名と一人称を読み取れませんでした。形式を確認してください。');
+                      showAppAlert('ファイル内のメタデータから主人公名と一人称を読み取れませんでした。形式を確認してください。');
                     }
                   };
                   reader.readAsText(file);
@@ -3517,6 +3712,7 @@ ${currentMapJson}
             </button>
           </div>
         </div>
+        {renderGlobalModals()}
       </div>
     );
   }
@@ -3907,8 +4103,8 @@ ${currentMapJson}
                       </div>
                     </div>
                     <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>シナリオ選択画面へ</button>
-                    <button onClick={() => {
-                      if (confirm("トップ画面へ戻りますか？（現在の進行状況は自動セーブされています）")) {
+                    <button onClick={async () => {
+                      if (await showAppConfirm("トップ画面へ戻りますか？（現在の進行状況は自動セーブされています）", { title: 'トップ画面へ戻る' })) {
                         setGameState('WELCOME'); 
                         setShowSettings(false);
                       }
@@ -3994,6 +4190,8 @@ ${currentMapJson}
                 {renderSupportPanel('modal')}
               </div>
             )}
+
+            {renderGlobalModals()}
 
             <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end' }}>
               <div style={{ position: 'absolute', top: '-45px', right: '0', width: '100%', display: 'flex', gap: '5px', zIndex: 10 }}>
