@@ -237,6 +237,12 @@ interface AppMessage {
   hasSpeakerWarning?: boolean;
 }
 
+interface RecoverableSendState {
+  text: string;
+  previousMessages: AppMessage[];
+  isGm: boolean;
+}
+
 interface CharacterData {
   true_name?: string;
   is_name_known_to_player?: boolean;
@@ -1131,6 +1137,8 @@ export default function ChatNoir() {
   const [isLoading, setIsLoading] = useState(false);
   const latestMessagesRef = useRef<AppMessage[]>([]);
   const regenerateMessageRef = useRef<((index: number) => void) | null>(null);
+  const [recoverableSend, setRecoverableSend] = useState<RecoverableSendState | null>(null);
+  const recoverableSendRef = useRef<RecoverableSendState | null>(null);
   const gmMessageCount = messages.filter(message => message.isGm).length;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1153,6 +1161,11 @@ export default function ChatNoir() {
   useEffect(() => {
     latestSupportStorySnapshotsRef.current = supportStorySnapshots;
   }, [supportStorySnapshots]);
+
+  const setRecoverableSendState = (nextValue: RecoverableSendState | null) => {
+    recoverableSendRef.current = nextValue;
+    setRecoverableSend(nextValue);
+  };
 
   useEffect(() => {
     isScenarioDebugModeRef.current = isScenarioDebugMode;
@@ -1238,6 +1251,7 @@ export default function ChatNoir() {
 
   const resetAllState = () => {
     setMessages([]);
+    setRecoverableSendState(null);
     setSupportMessagesState([]);
     setSupportStorySnapshotsState([]);
     setSupportSuggestions([]);
@@ -1283,6 +1297,32 @@ export default function ChatNoir() {
     setTimeout(() => setToastMsg(''), 3000);
   };
 
+  const restoreTextToInput = (text: string, isGm: boolean) => {
+    if (isGm) {
+      setIsGmModalOpen(true);
+      setTimeout(() => {
+        gmInputRef.current?.setValue(text);
+        gmInputRef.current?.focus();
+      }, 0);
+      return;
+    }
+
+    chatInputRef.current?.setValue(text);
+    chatInputRef.current?.focus();
+  };
+
+  const restoreLastSentMessage = () => {
+    const pendingSend = recoverableSendRef.current;
+    if (!pendingSend || !isLoading) return;
+
+    latestMessagesRef.current = pendingSend.previousMessages;
+    setMessages(pendingSend.previousMessages);
+    setRecoverableSendState(null);
+    restoreTextToInput(pendingSend.text, pendingSend.isGm);
+    abortControllerRef.current?.abort();
+    showToast('送信内容を入力欄へ戻しました');
+  };
+
   const stopScenarioDebugMode = (options: { showToast?: boolean; reason?: string; abortRequests?: boolean } = {}) => {
     const {
       showToast: shouldShowToast = true,
@@ -1319,6 +1359,7 @@ export default function ChatNoir() {
     debugAutomatedMessageRef.current = false;
     setGameState(nextState);
     setMessages(parsed.messages || []);
+    setRecoverableSendState(null);
     setGmRuleText(parsed.gmRuleText || '');
     setSupportPersonaPath(parsed.supportPersonaPath || DEFAULT_SUPPORT_PERSONA_PATH);
     setSupportPersonaPrompt('');
@@ -2553,6 +2594,7 @@ ${currentMapJson}
     const newHistory: AppMessage[] = [...previousMessages, newUserMsg];
     latestMessagesRef.current = newHistory;
     setMessages(newHistory);
+    setRecoverableSendState(automatedByDebug ? null : { text: textToSend, previousMessages, isGm });
     
     setIsLoading(true);
     debugAutomatedMessageRef.current = automatedByDebug;
@@ -2576,6 +2618,7 @@ ${currentMapJson}
       });
       const data = await res.json();
       if (res.ok) {
+        setRecoverableSendState(null);
         const nextModelMessage: AppMessage = {
           role: 'model',
           parts: [{ text: typeof data.text === 'string' ? data.text : '' }],
@@ -2614,12 +2657,8 @@ ${currentMapJson}
         // 再送処理：履歴からユーザー発言を取り除き、入力欄に戻す
         latestMessagesRef.current = previousMessages;
         setMessages(previousMessages);
-        if (isGm) {
-          gmInputRef.current?.setValue(textToSend);
-          setIsGmModalOpen(true);
-        } else {
-          chatInputRef.current?.setValue(textToSend);
-        }
+        setRecoverableSendState(null);
+        restoreTextToInput(textToSend, isGm);
 
         if (automatedByDebug) {
           stopScenarioDebugMode({
@@ -2640,12 +2679,8 @@ ${currentMapJson}
       // 再送処理
       latestMessagesRef.current = previousMessages;
       setMessages(previousMessages);
-      if (isGm) {
-        gmInputRef.current?.setValue(textToSend);
-        setIsGmModalOpen(true);
-      } else {
-        chatInputRef.current?.setValue(textToSend);
-      }
+      setRecoverableSendState(null);
+      restoreTextToInput(textToSend, isGm);
 
       if (automatedByDebug && !isAbortError(err)) {
         stopScenarioDebugMode({
@@ -3945,6 +3980,9 @@ ${currentMapJson}
                     placeholder="例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Enterで送信、改行はShift+Enter)"
                   />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                    {recoverableSend?.isGm && isLoading && (
+                      <button onClick={restoreLastSentMessage} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1.2rem', borderRadius: '4px', cursor: 'pointer' }}>中止</button>
+                    )}
                     <button onClick={() => { const t = gmInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { gmInputRef.current?.clear(); sendMessage(t, true); } }} disabled={isLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', opacity: isLoading ? 0.5 : 1, transition: '0.2s' }}>送信する</button>
                   </div>
                 </div>
@@ -3997,6 +4035,14 @@ ${currentMapJson}
               >
                 送信
               </button>
+              {recoverableSend && !recoverableSend.isGm && isLoading && (
+                <button
+                  onClick={restoreLastSentMessage}
+                  style={{ height: '40px', padding: '0 1.25rem', background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  中止
+                </button>
+              )}
               {/* 再生成ボタン */}
               {(() => {
                 let latestModelIndex = -1;
