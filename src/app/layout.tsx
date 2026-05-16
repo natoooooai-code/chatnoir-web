@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { Shippori_Mincho, Noto_Sans_JP, Klee_One } from "next/font/google";
 import "./globals.css";
 
+const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
+const basePath = process.env.GITHUB_ACTIONS === "true" && repositoryName ? `/${repositoryName}` : "";
+
 const shippori = Shippori_Mincho({
   weight: ['400', '600'],
   subsets: ["latin"],
@@ -26,6 +29,10 @@ const klee = Klee_One({
 export const metadata: Metadata = {
   title: "ChatNoir Web",
   description: "A TRPG Mystery Game Interface",
+  icons: {
+    icon: `${basePath}/favicon.ico`,
+    shortcut: `${basePath}/favicon.ico`,
+  },
 };
 
 export default function RootLayout({
