@@ -43,12 +43,36 @@ const SCENARIO_DEBUG_PROMPT = [
 const SUPPORT_HISTORY_MAX_MESSAGES = 18;
 const SUPPORT_HISTORY_MAX_CHARS = 12000;
 
+const resolveRuntimeBasePath = (): string => {
+  if (typeof window === 'undefined') return '';
+
+  if (!window.location.hostname.endsWith('github.io')) {
+    return '';
+  }
+
+  const firstSegment = window.location.pathname.split('/').filter(Boolean)[0];
+  return firstSegment ? `/${firstSegment}` : '';
+};
+
 const resolvePublicAssetPath = (path: string): string => {
-  if (!path) return '';
+  if (!path || !path.trim()) return '';
   if (path.startsWith('data:') || path.startsWith('blob:') || /^[a-z]+:\/\//i.test(path)) {
     return path;
   }
-  return path.replace(/^\/+/, '');
+
+  const normalized = path.replace(/^\/+/, '');
+  const basePath = resolveRuntimeBasePath();
+
+  if (!basePath) {
+    return `/${normalized}`;
+  }
+
+  const repoName = basePath.slice(1);
+  if (normalized === repoName || normalized.startsWith(`${repoName}/`)) {
+    return `/${normalized}`;
+  }
+
+  return `${basePath}/${normalized}`;
 };
 
 // --- Chat Input Component ---
@@ -66,8 +90,9 @@ const ChatInput = React.forwardRef<ChatInputHandle, {
   className?: string;
   style?: React.CSSProperties;
   placeholder?: string;
+  name?: string;
   sendTrigger?: 'enter' | 'ctrl-enter';
-}>(({ onSend, disabled, className, style, placeholder, sendTrigger = 'enter' }, ref) => {
+}>(({ onSend, disabled, className, style, placeholder, name, sendTrigger = 'enter' }, ref) => {
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -127,6 +152,7 @@ const ChatInput = React.forwardRef<ChatInputHandle, {
   return (
     <textarea
       ref={textareaRef}
+      name={name}
       className={className}
       style={style}
       placeholder={placeholder}
@@ -146,6 +172,7 @@ const FileUploadTrigger = ({
   multiple = false,
   fullWidth = false,
   helperText,
+  inputName,
 }: {
   accept: string;
   onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
@@ -153,6 +180,7 @@ const FileUploadTrigger = ({
   multiple?: boolean;
   fullWidth?: boolean;
   helperText?: string;
+  inputName?: string;
 }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', alignItems: fullWidth ? 'stretch' : 'flex-start' }}>
@@ -174,7 +202,7 @@ const FileUploadTrigger = ({
           textAlign: 'center',
         }}
       >
-        <input type="file" accept={accept} multiple={multiple} onChange={onChange} style={{ display: 'none' }} />
+        <input type="file" name={inputName} accept={accept} multiple={multiple} onChange={onChange} style={{ display: 'none' }} />
         {buttonLabel || (multiple ? 'ファイルをまとめて選ぶ' : 'ファイルを選ぶ')}
       </label>
       {helperText ? (
@@ -2919,6 +2947,7 @@ ${currentMapJson}
 
         <ChatInput
           ref={supportInputRef}
+          name="supportMessage"
           onSend={() => sendSupportMessage()}
           disabled={isSupportActionDisabled}
           style={{ width: '100%', minHeight: '72px', maxHeight: '140px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit', flexShrink: 0 }}
@@ -3008,7 +3037,7 @@ ${currentMapJson}
               <div key={meta.key} style={{ display: 'flex', flexDirection: 'column', width: '280px', background: '#161616', border: '1px solid #2a2a2a', borderRadius: '6px', overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
                 <div
                   onClick={() => handleAutoSaveLoad(meta.key)}
-                  style={{ width: '100%', height: '160px', background: meta.coverImage ? `url(${meta.coverImage}) center/cover` : '#222', cursor: 'pointer', position: 'relative' }}
+                  style={{ width: '100%', height: '160px', background: meta.coverImage ? `url(${resolvePublicAssetPath(meta.coverImage)}) center/cover` : '#222', cursor: 'pointer', position: 'relative' }}
                 >
                   {!meta.coverImage && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: '0.8rem', letterSpacing: '2px' }}>NO IMAGE</div>}
                 </div>
@@ -3195,6 +3224,7 @@ ${currentMapJson}
           <div className={styles.inputWrapper}>
             <input
               type="password"
+              name="apiKey"
               className={styles.input}
               placeholder="Google AI Studio API Key"
               value={apiKey}
@@ -3216,6 +3246,7 @@ ${currentMapJson}
             <div style={{ marginBottom: '0.9rem' }}>
               <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>APIキーの保存方法</label>
               <select
+                name="apiKeyStorageMode"
                 value={apiKeyStorageMode}
                 onChange={(e) => {
                   const nextMode = e.target.value;
@@ -3234,6 +3265,7 @@ ${currentMapJson}
             </div>
 
             <select
+              name="selectedModel"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               style={{ width: '100%', padding: '0.8rem', background: 'rgba(255,255,255,0.5)', color: '#111', border: '1px solid rgba(0,0,0,0.15)', borderRadius: '2px', fontFamily: 'inherit' }}
@@ -3257,6 +3289,7 @@ ${currentMapJson}
               <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>プロジェクト名（必須）</label>
               <input
                 type="text"
+                name="saveName"
                 className={styles.input}
                 placeholder="例：1周目、Aルート、2024プレイ等"
                 value={saveName}
@@ -3275,6 +3308,7 @@ ${currentMapJson}
                 accept=".md,.txt,image/*"
                 multiple
                 fullWidth
+                inputName="scenarioBundleFiles"
                 onChange={handleMultiFileRead}
                 buttonLabel="ファイルをまとめて選ぶ"
                 helperText={scenarioSetupReadyCount > 0
@@ -3294,7 +3328,7 @@ ${currentMapJson}
                 <IconImage /> パッケージ画像
                 {coverImage && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <FileUploadTrigger accept="image/*" onChange={(e) => {
+              <FileUploadTrigger accept="image/*" inputName="coverImageFile" onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const reader = new FileReader();
@@ -3310,7 +3344,7 @@ ${currentMapJson}
                 <IconFile /> 設定ファイル
                 {scenarioText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <FileUploadTrigger accept=".md,.txt" onChange={(e) => handleFileRead(e, setScenarioText)} helperText={scenarioText ? '設定ファイルを読み込み済みです。再選択すると上書きします。' : '設定ファイルを選ぶとここに反映されます。'} />
+              <FileUploadTrigger accept=".md,.txt" inputName="scenarioTextFile" onChange={(e) => handleFileRead(e, setScenarioText)} helperText={scenarioText ? '設定ファイルを読み込み済みです。再選択すると上書きします。' : '設定ファイルを選ぶとここに反映されます。'} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -3318,7 +3352,7 @@ ${currentMapJson}
                 <IconFile /> 概要ファイル
                 {briefingText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <FileUploadTrigger accept=".md,.txt" onChange={(e) => handleFileRead(e, setBriefingText)} helperText={briefingText ? '概要ファイルを読み込み済みです。再選択すると上書きします。' : '概要ファイルを選ぶとここに反映されます。'} />
+              <FileUploadTrigger accept=".md,.txt" inputName="briefingFile" onChange={(e) => handleFileRead(e, setBriefingText)} helperText={briefingText ? '概要ファイルを読み込み済みです。再選択すると上書きします。' : '概要ファイルを選ぶとここに反映されます。'} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -3326,7 +3360,7 @@ ${currentMapJson}
                 <IconFile /> プロローグ
                 {prologueText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <FileUploadTrigger accept=".md,.txt" onChange={(e) => handleFileRead(e, setPrologueText)} helperText={prologueText ? 'プロローグを読み込み済みです。再選択すると上書きします。' : 'プロローグファイルを選ぶとここに反映されます。'} />
+              <FileUploadTrigger accept=".md,.txt" inputName="prologueFile" onChange={(e) => handleFileRead(e, setPrologueText)} helperText={prologueText ? 'プロローグを読み込み済みです。再選択すると上書きします。' : 'プロローグファイルを選ぶとここに反映されます。'} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -3334,7 +3368,7 @@ ${currentMapJson}
                 <IconMap size={14} style={{ marginRight: '4px' }} /> マップ情報
                 {mapFileText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <FileUploadTrigger accept=".md,.txt" onChange={(e) => {
+              <FileUploadTrigger accept=".md,.txt" inputName="mapFile" onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const reader = new FileReader();
@@ -3365,7 +3399,7 @@ ${currentMapJson}
                 {hasRequiredScenarioMeta(scenarioMeta) && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
 
-              <FileUploadTrigger accept=".md,.txt" onChange={(e) => {
+              <FileUploadTrigger accept=".md,.txt" inputName="scenarioMetaFile" onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const reader = new FileReader();
@@ -3395,7 +3429,7 @@ ${currentMapJson}
                 }
               </p>
               <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>独自ルールに差し替える場合のみアップロード</p>
-              <FileUploadTrigger accept=".md,.txt" onChange={(e) => { handleFileRead(e, setGmRuleText); setIsCustomGmRule(true); }} helperText={isCustomGmRule ? '現在はカスタムルールを反映中です。再選択すると上書きします。' : '内蔵ルールを使う場合はアップロード不要です。'} />
+              <FileUploadTrigger accept=".md,.txt" inputName="gmRuleFile" onChange={(e) => { handleFileRead(e, setGmRuleText); setIsCustomGmRule(true); }} helperText={isCustomGmRule ? '現在はカスタムルールを反映中です。再選択すると上書きします。' : '内蔵ルールを使う場合はアップロード不要です。'} />
             </div>
 
             <button
@@ -3497,6 +3531,7 @@ ${currentMapJson}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
               <textarea
+                name="reviewMessage"
                 value={reviewInputText}
                 onChange={e => setReviewInputText(e.target.value)}
                 onKeyDown={(e) => {
@@ -3741,7 +3776,7 @@ ${currentMapJson}
                         }} />
                       </div>
                     </div>
-                    <select value={fontFamily} onChange={e => setFontFamily(e.target.value as FontFamily)} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px' }}>
+                    <select name="fontFamily" value={fontFamily} onChange={e => setFontFamily(e.target.value as FontFamily)} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px' }}>
                       <option value="serif">明朝体 (Serif)</option>
                       <option value="sans">ゴシック体 (Sans)</option>
                       <option value="klee">手書き風 (Klee One)</option>
@@ -3752,6 +3787,7 @@ ${currentMapJson}
                       </label>
                       <input
                         type="range"
+                        name="fontSize"
                         min="12"
                         max="28"
                         step="1"
@@ -3781,7 +3817,7 @@ ${currentMapJson}
                     </div>
                     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>AIモデル</p>
-                      <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                      <select name="runtimeModel" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
                         <option value="gemma-4-31b-it">Gemma 4 31B</option>
                         <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
                         <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
@@ -3816,6 +3852,7 @@ ${currentMapJson}
           <div style={{ display: 'flex', gap: '1rem', width: '100%', alignItems: 'flex-end' }}>
             <ChatInput
               ref={chatInputRef}
+              name="mainMessage"
               className={styles.chatInput}
               style={{ minHeight: '80px', maxHeight: '300px', flex: 1, resize: 'none', padding: '12px' }}
               placeholder={isScenarioDebugMode ? 'シナリオデバッグモード実行中です。停止すると手動入力できます。' : 'Enterで送信、Shift+Enterで改行'}
@@ -3859,6 +3896,7 @@ ${currentMapJson}
 
                   <ChatInput
                     ref={gmInputRef}
+                    name="gmMessage"
                     onSend={(text) => { sendMessage(text, true); }}
                     disabled={isLoading}
                     style={{ width: '100%', minHeight: '80px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit' }}
@@ -4107,6 +4145,7 @@ ${currentMapJson}
             {openSections.memo && (
               <div style={{ margin: '1rem 0' }}>
                 <textarea
+                  name="playerMemo"
                   value={playerMemo}
                   onChange={(e) => setPlayerMemo(e.target.value)}
                   placeholder="気になったことや推理をここに書き留めておきましょう..."
@@ -4159,7 +4198,7 @@ ${currentMapJson}
 
                         {/* 左：画像・メニュー列 */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '96px', flexShrink: 0 }}>
-                          <div style={{ width: '96px', height: '96px', borderRadius: '4px', background: c.image ? `url(${c.image}) center/cover no-repeat` : 'var(--bg-color)', display: 'flex', flexShrink: 0, alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-color)', cursor: 'pointer', overflow: 'hidden' }} onClick={() => document.getElementById(fileInputId)?.click()}>
+                          <div style={{ width: '96px', height: '96px', borderRadius: '4px', background: c.image ? `url(${resolvePublicAssetPath(c.image)}) center/cover no-repeat` : 'var(--bg-color)', display: 'flex', flexShrink: 0, alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-color)', cursor: 'pointer', overflow: 'hidden' }} onClick={() => document.getElementById(fileInputId)?.click()}>
                             {!c.image && (
                               c.isGenerating ? <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>準備中..</span> :
                                 isFemale ? (
