@@ -1734,7 +1734,7 @@ export default function ChatNoir() {
       return;
     }
     if (!saveName.trim()) {
-      alert("プロジェクト名を入力してください（セーブスロットの識別に必要です）");
+      alert("プロジェクト名を入力してください");
       return;
     }
     persistApiKey(apiKey, apiKeyStorageMode);
@@ -3241,11 +3241,8 @@ ${currentMapJson}
               <p style={{ fontSize: '0.76rem', color: '#111', marginBottom: '0.45rem', fontWeight: 700, letterSpacing: '0.6px' }}>
                 APIキーの保存について
               </p>
-              <p style={{ fontSize: '0.72rem', color: '#444', lineHeight: 1.7, marginBottom: '0.55rem' }}>
-                入力したAPIキーは GitHub やこのサイトのセーブデータには保存されません。AI応答を作るときだけ、あなたのブラウザから Google API へ直接送信されます。
-              </p>
-              <p style={{ fontSize: '0.72rem', color: '#666', lineHeight: 1.7, margin: 0 }}>
-                共用PCでは「一時保存」をおすすめします。利用後にブラウザを閉じるとキーが消えます。
+              <p style={{ fontSize: '0.72rem', color: '#444', lineHeight: 1.7, margin: 0 }}>
+                入力したAPIキーは GitHub やこのサイトのセーブデータには保存されません。AI応答を作るときだけ、あなたのブラウザから Google API へ直接送信されます。共用PCでは「一時保存」をおすすめします。利用後にブラウザを閉じるとキーが消えます。
               </p>
             </div>
 
@@ -3310,6 +3307,34 @@ ${currentMapJson}
               <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
                 設定ファイル・概要・プロローグ・ルール・画像を<br />まとめて選択して一気に準備できます。
               </p>
+              {scenarioSetupReadyCount > 0 ? (
+                <div
+                  style={{
+                    marginBottom: '1rem',
+                    padding: '0.9rem 1rem',
+                    borderRadius: '10px',
+                    border: '1px solid rgba(22, 163, 74, 0.3)',
+                    background: scenarioSetupReadyCount === 6 ? 'rgba(22, 163, 74, 0.14)' : 'rgba(245, 158, 11, 0.12)',
+                    color: '#111',
+                    textAlign: 'left',
+                    boxShadow: '0 6px 18px rgba(15, 23, 42, 0.06)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: '0.9rem', letterSpacing: '0.4px' }}>
+                      {scenarioSetupReadyCount === 6 ? '読み込み完了' : '読み込み中'}
+                    </strong>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, padding: '0.2rem 0.55rem', borderRadius: '999px', background: 'rgba(255,255,255,0.7)' }}>
+                      {scenarioSetupReadyCount}/6 項目
+                    </span>
+                  </div>
+                  <p style={{ margin: '0.45rem 0 0', fontSize: '0.76rem', lineHeight: 1.6, color: '#334155' }}>
+                    {scenarioSetupReadyCount === 6
+                      ? '必要な項目はすべて反映済みです。このまま物語の準備へ進めます。'
+                      : '選択した内容は反映済みです。残りの項目を追加するか、再選択して上書きできます。'}
+                  </p>
+                </div>
+              ) : null}
               <FileUploadTrigger
                 accept=".md,.txt,image/*"
                 multiple
@@ -3318,7 +3343,7 @@ ${currentMapJson}
                 onChange={handleMultiFileRead}
                 buttonLabel="ファイルをまとめて選ぶ"
                 helperText={scenarioSetupReadyCount > 0
-                  ? `現在の準備状況: ${scenarioSetupReadyCount}/6 項目を読み込み済みです。再選択すると上書きされます。`
+                  ? `${scenarioSetupReadyCount}/6 項目を反映済みです。再選択すると上書きされます。`
                   : '一括アップロード後の内容は下の各項目に反映されます。'}
               />
             </div>
