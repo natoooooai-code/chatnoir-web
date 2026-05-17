@@ -3518,7 +3518,7 @@ ${currentMapJson}
             </select>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
-              <span style={{ fontSize: '0.8rem', color: '#555' }}>フォールバック（混雑時に自動で下位モデルへ切替）</span>
+              <span style={{ fontSize: '0.8rem', color: '#555' }}>フォールバック（混雑時に自動で別モデルへ切替）</span>
               <div
                 onClick={() => setFallbackEnabled(!fallbackEnabled)}
                 style={{ width: '40px', height: '20px', background: fallbackEnabled ? '#4a7c59' : '#ccc', borderRadius: '20px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s', flexShrink: 0 }}
@@ -4657,15 +4657,18 @@ ${currentMapJson}
 
           <div className={styles.sidebarSection} style={{ paddingRight: '0.5rem', whiteSpace: 'pre-wrap' }}>
             <h3 onClick={() => setOpenSections(prev => ({ ...prev, howTo: !prev.howTo }))} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>遊び方</span>
+              <span>イントロダクション</span>
               <span style={{ fontSize: '0.7rem', color: '#999' }}>{openSections.howTo ? '▲' : '▼'}</span>
             </h3>
             {openSections.howTo && (
               <div style={{ color: 'var(--text-main)', fontSize: '0.85rem', lineHeight: '1.8', margin: '1rem 0' }}>
-                <ul style={{ paddingLeft: '1.2rem' }}>
-                  <li style={{ marginBottom: '0.5rem' }}><strong>「」</strong>：主人公としての発言</li>
-                  <li style={{ marginBottom: '0.5rem' }}><strong>自由入力</strong>：主人公としての行動</li>
-                </ul>
+                {briefingText ? (
+                  <div>
+                    <div className="markdown-body" style={{ color: 'var(--text-main)', fontSize: '0.82rem' }}>
+                      <ReactMarkdown>{formatNovelText(briefingText, false)}</ReactMarkdown>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
