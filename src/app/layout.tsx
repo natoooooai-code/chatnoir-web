@@ -1,30 +1,8 @@
 import type { Metadata } from "next";
-import { Shippori_Mincho, Noto_Sans_JP, Klee_One } from "next/font/google";
 import "./globals.css";
 
 const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
 const basePath = process.env.GITHUB_ACTIONS === "true" && repositoryName ? `/${repositoryName}` : "";
-
-const shippori = Shippori_Mincho({
-  weight: ['400', '600'],
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-serif",
-});
-
-const notoSans = Noto_Sans_JP({
-  weight: ['400', '600'],
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-sans",
-});
-
-const klee = Klee_One({
-  weight: ['400', '600'],
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-klee",
-});
 
 export const metadata: Metadata = {
   title: "ChatNoir Web",
@@ -41,7 +19,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja" className={`${shippori.variable} ${notoSans.variable} ${klee.variable}`}>
+    <html lang="ja">
       <body>{children}</body>
     </html>
   );

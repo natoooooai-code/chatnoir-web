@@ -13,6 +13,9 @@
   /* 欧文サンセリフ + 和文ゴシック フォールバック */
   --font-sans: "Inter", "Helvetica Neue", "Hiragino Sans",
     "Hiragino Kaku Gothic ProN", Arial, "Noto Sans JP", Meiryo, sans-serif;
+  /* 手書き風フォントのローカルフォールバック */
+  --font-klee: "Klee One", "Hiragino Maru Gothic ProN", "Yu Gothic",
+    "YuGothic", Meiryo, sans-serif;
 }
 
 * {
