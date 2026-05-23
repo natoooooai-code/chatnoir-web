@@ -47,6 +47,7 @@ type AppPromptState = {
 // --- SVG Icons ---
 const IconImage = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', marginBottom: '-3px' }}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>;
 const IconFile = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', marginBottom: '-3px' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>;
+const IconPin = ({ filled = false }: { filled?: boolean }) => <svg width="16" height="16" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 17v4"></path><path d="M8 3h8"></path><path d="M9 3v5l-3 4v1h12v-1l-3-4V3"></path></svg>;
 const IconRefresh = ({ size = 12 }: { size?: number }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px' }}><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>;
 const IconMap = ({ size = 14, style }: { size?: number; style?: React.CSSProperties }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', marginBottom: '-2px', ...style }}><path d="M1 6v12l7-4 8 4 7-4V2l-7 4-8-4-7 4z"></path><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>;
 const BetaBadge = () => <span style={{ fontSize: '0.58rem', letterSpacing: '1.4px', fontWeight: 700, padding: '2px 6px', borderRadius: '999px', background: '#f59e0b', color: '#111827' }}>BETA</span>;
@@ -56,6 +57,7 @@ const SCENARIO_STORE = 'scenario_master';
 const API_KEY_STORAGE_KEY = 'chatnoir_apiKey';
 const API_KEY_STORAGE_MODE_KEY = 'chatnoir_apiKeyStorageMode';
 const MAP_SNAPSHOT_STORAGE_PREFIX = 'chatnoir_map_snapshot_';
+const PINNED_SAVE_KEYS_STORAGE_KEY = 'chatnoir_pinned_save_keys';
 const SUPPORT_AVATAR_PATH = 'Chibi-style_close-up_face_portrait_of_an_anime_gir-1775997248547.png';
 const DEFAULT_SUPPORT_PERSONA_PATH = 'support-personas/lore-support.md';
 const DEFAULT_SAMPLE_COVER_PATH = 'package.png';
@@ -107,6 +109,47 @@ const resolvePublicAssetPath = (path: string): string => {
 
   return `${basePath}/${normalized}`;
 };
+
+const sanitizeScenarioTitle = (value: string): string => value.trim().replace(/[\/\\?%*:|"<>]/g, '_');
+
+const buildAutoSaveKey = (scenarioTitle: string, sessionRunId: string): string => {
+  const fileNameTitle = sanitizeScenarioTitle(scenarioTitle);
+  if (!fileNameTitle || !sessionRunId) return '';
+  return `auto_save_${fileNameTitle}_${sessionRunId}`;
+};
+
+const readPinnedSaveKeys = (): string[] => {
+  if (typeof window === 'undefined') return [];
+
+  try {
+    const raw = localStorage.getItem(PINNED_SAVE_KEYS_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return Array.from(new Set(
+      parsed
+        .map((value) => typeof value === 'string' ? value.trim() : '')
+        .filter((value) => value.length > 0)
+    ));
+  } catch {
+    return [];
+  }
+};
+
+const persistPinnedSaveKeys = (titles: string[]) => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    const normalized = Array.from(new Set(titles.map((title) => title.trim()).filter((title) => title.length > 0)));
+    localStorage.setItem(PINNED_SAVE_KEYS_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    // localStorage unavailable is non-fatal for waiting room preferences.
+  }
+};
+
+const buildDuplicateSessionRunId = (): string => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 // --- Chat Input Component ---
 interface ChatInputHandle {
@@ -300,7 +343,10 @@ interface AutoSaveMeta {
   key: string;
   coverImage: string;
   saveName: string;
+  scenarioTitle?: string;
   lastPlay?: string;
+  statusLabel?: string;
+  statusTone?: SaveStatusTone;
 }
 
 interface ScenarioMasterData {
@@ -381,6 +427,8 @@ interface StoredMapSnapshot {
 }
 
 type ApiKeyStorageMode = 'session' | 'local';
+type SaveSortOrder = 'newest' | 'oldest';
+type SaveStatusTone = 'neutral' | 'info' | 'success' | 'warning';
 
 interface SpecialCommandPayload {
   characters?: CharacterSummary[];
@@ -680,6 +728,29 @@ const normalizeStoredGameState = (value: unknown): StoredGameState => {
   };
 };
 
+const deriveAutoSaveStatus = (value: unknown): Pick<AutoSaveMeta, 'statusLabel' | 'statusTone'> => {
+  const normalized = normalizeStoredGameState(value);
+  const hasEndingMarker = (normalized.messages || []).some((message) => message.parts?.[0]?.text?.includes('【終】'));
+
+  if (normalized.endingPhase === 'REVIEW') {
+    return { statusLabel: '感想戦中', statusTone: 'success' };
+  }
+
+  if (normalized.endingPhase === 'MENU' || normalized.endingPhase === 'FADE_OUT' || hasEndingMarker) {
+    return { statusLabel: 'クリア済み', statusTone: 'success' };
+  }
+
+  if (normalized.endingPhase === 'READY_TO_END') {
+    return { statusLabel: '終幕直前', statusTone: 'warning' };
+  }
+
+  if (normalized.openingFlowStage === 'PROLOGUE' || normalized.openingFlowStage === 'INTRODUCTION' || normalized.gameState === 'BRIEFING') {
+    return { statusLabel: '導入中', statusTone: 'info' };
+  }
+
+  return { statusLabel: 'プレイ中', statusTone: 'neutral' };
+};
+
 const normalizeSpecialCommandPayload = (value: unknown): SpecialCommandPayload => {
   const record = isRecord(value) ? value : {};
 
@@ -806,11 +877,14 @@ async function getAllIDBSavesMeta(): Promise<AutoSaveMeta[]> {
           const key = cursor.key as string;
           if (key.startsWith('auto_save_')) {
             const value = isRecord(cursor.value) ? cursor.value : {};
+            const saveStatus = deriveAutoSaveStatus(value);
             metaList.push({
               key,
               coverImage: getString(value.coverImage) || '',
               saveName: getString(value.saveName) || '',
-              lastPlay: getString(value.lastPlay) || ''
+              scenarioTitle: getString(value.scenarioTitle) || '',
+              lastPlay: getString(value.lastPlay) || '',
+              ...saveStatus,
             });
           }
           cursor.continue();
@@ -1320,7 +1394,39 @@ export default function ChatNoir() {
     setSupportPersonaReloadVersion((prev) => prev + 1);
   };
 
+  const [selectedScenarioFilter, setSelectedScenarioFilter] = useState('all');
+  const [saveSortOrder, setSaveSortOrder] = useState<SaveSortOrder>('newest');
+  const [pinnedSaveKeys, setPinnedSaveKeys] = useState<string[]>(() => readPinnedSaveKeys());
+
   const currentNodeLabel = useMemo(() => getMapNodeLabel(mapLayers, currentPos), [mapLayers, currentPos]);
+  const scenarioFilterOptions = useMemo(() => {
+    return Array.from(new Set(autoSaves.map((meta) => meta.scenarioTitle?.trim() || '名称未設定')))
+      .sort((a, b) => a.localeCompare(b, 'ja'));
+  }, [autoSaves]);
+  const visibleAutoSaves = useMemo(() => {
+    const pinnedSaveKeySet = new Set(pinnedSaveKeys);
+    const getTimestamp = (value?: string) => {
+      if (!value) return 0;
+      const timestamp = new Date(value).getTime();
+      return Number.isFinite(timestamp) ? timestamp : 0;
+    };
+
+    return [...autoSaves]
+      .filter((meta) => {
+        const title = meta.scenarioTitle?.trim() || '名称未設定';
+        return selectedScenarioFilter === 'all' || title === selectedScenarioFilter;
+      })
+      .sort((a, b) => {
+        const aPinned = pinnedSaveKeySet.has(a.key);
+        const bPinned = pinnedSaveKeySet.has(b.key);
+        if (aPinned !== bPinned) return aPinned ? -1 : 1;
+        const timestampDiff = saveSortOrder === 'newest'
+          ? getTimestamp(b.lastPlay) - getTimestamp(a.lastPlay)
+          : getTimestamp(a.lastPlay) - getTimestamp(b.lastPlay);
+        if (timestampDiff !== 0) return timestampDiff;
+        return (a.scenarioTitle || a.saveName || '').localeCompare((b.scenarioTitle || b.saveName || ''), 'ja');
+      });
+  }, [autoSaves, pinnedSaveKeys, saveSortOrder, selectedScenarioFilter]);
   const scenarioSetupReadyCount = [
     Boolean(coverImage),
     Boolean(scenarioText),
@@ -1357,6 +1463,7 @@ export default function ChatNoir() {
   const [fontSize, setFontSize] = useState<number>(16);
   const [isVertical, setIsVertical] = useState<boolean>(false);
   const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [showLibrarySettings, setShowLibrarySettings] = useState<boolean>(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(380);
   const dragRef = useRef<boolean>(false);
   const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(450);
@@ -1403,6 +1510,7 @@ export default function ChatNoir() {
   const canUseSupportAssistant = gameState === 'PLAYING' && messages.length > 2;
   const canUseNotebookSidebar = gameState === 'PLAYING' && messages.length > 2;
   const hasReviewConversation = reviewMessages.length > messages.length;
+  const isCurtainCloseLocked = gameState === 'PLAYING' && openingFlowStage === 'PROLOGUE';
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<ChatInputHandle>(null);
@@ -1853,11 +1961,11 @@ export default function ChatNoir() {
         lastPlay
       };
 
-      const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
+      const fileNameTitle = sanitizeScenarioTitle(scenarioTitle);
       // sessionRunIdが空（新規開始前）、またはタイトルが設定されていない場合はセーブしない
       if (!sessionRunId || !fileNameTitle) return;
 
-      const runKey = `auto_save_${fileNameTitle}_${sessionRunId}`;
+      const runKey = buildAutoSaveKey(fileNameTitle, sessionRunId);
       persistMapSnapshot(runKey, mapLayers, currentPos, lastPlay);
       sessionStorage.setItem('chatnoir-current-save-key', runKey);
       saveToIDB(runKey, currentData);
@@ -1869,10 +1977,10 @@ export default function ChatNoir() {
       return;
     }
 
-    const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
+    const fileNameTitle = sanitizeScenarioTitle(scenarioTitle);
     if (!sessionRunId || !fileNameTitle) return;
 
-    const runKey = `auto_save_${fileNameTitle}_${sessionRunId}`;
+    const runKey = buildAutoSaveKey(fileNameTitle, sessionRunId);
     const lastPlay = new Date().toISOString();
     persistMapSnapshot(runKey, mapLayers, currentPos, lastPlay);
   });
@@ -2131,8 +2239,12 @@ export default function ChatNoir() {
   };
 
   const handleStartLogin = () => {
-    if (apiKey.trim() === '' || !scenarioText || !prologueText || !briefingText) {
-      showAppAlert("必須項目（APIキー、設定ファイル、プロローグ、概要ファイル）をすべてセットしてください！");
+    if (apiKey.trim() === '') {
+      showAppAlert('APIキーを設定してください。待機室の設定から入力できます。');
+      return;
+    }
+    if (!scenarioText || !prologueText || !briefingText) {
+      showAppAlert('必須項目（設定ファイル、プロローグ、概要ファイル）をすべてセットしてください！');
       return;
     }
     if (!hasRequiredScenarioMeta(scenarioMeta)) {
@@ -2911,6 +3023,19 @@ ${currentMapJson}
     input.click();
   };
 
+  const togglePinnedSave = (saveKey: string) => {
+    const normalizedSaveKey = saveKey.trim();
+    if (!normalizedSaveKey) return;
+
+    setPinnedSaveKeys((prev) => {
+      const next = prev.includes(normalizedSaveKey)
+        ? prev.filter((item) => item !== normalizedSaveKey)
+        : [...prev, normalizedSaveKey];
+      persistPinnedSaveKeys(next);
+      return next;
+    });
+  };
+
   const handleAutoSaveLoad = async (key: string) => {
     const data = await loadFromIDB<StoredGameState>(key);
     if (data) {
@@ -2918,6 +3043,48 @@ ${currentMapJson}
       restoreStateData(data, undefined, key);
       showToast('オートセーブデータから復帰しました');
     }
+  };
+
+  const handleDuplicateSave = async (meta: AutoSaveMeta, e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+
+    const rawData = await loadFromIDB<Record<string, unknown>>(meta.key);
+    if (!rawData) {
+      showAppAlert('複製元のセーブデータを読み込めませんでした。');
+      return;
+    }
+
+    const scenarioTitleForSave = getString(rawData.scenarioTitle)?.trim() || meta.scenarioTitle?.trim() || meta.saveName?.trim() || '名称未設定';
+    const nextSessionRunId = buildDuplicateSessionRunId();
+    const nextSaveKey = buildAutoSaveKey(scenarioTitleForSave, nextSessionRunId);
+    if (!nextSaveKey) {
+      showAppAlert('シナリオ名を特定できないため、複製できませんでした。');
+      return;
+    }
+
+    const lastPlay = new Date().toISOString();
+    const duplicateBaseName = getString(rawData.saveName)?.trim() || meta.saveName?.trim() || scenarioTitleForSave;
+    const duplicatedData = structuredClone(rawData) as Record<string, unknown>;
+    duplicatedData.sessionRunId = nextSessionRunId;
+    duplicatedData.saveName = `${duplicateBaseName} のコピー`;
+    duplicatedData.scenarioTitle = scenarioTitleForSave;
+    duplicatedData.lastPlay = lastPlay;
+
+    await saveToIDB(nextSaveKey, duplicatedData);
+
+    const mapSnapshot = loadMapSnapshot(meta.key);
+    if (mapSnapshot?.mapLayers) {
+      persistMapSnapshot(
+        nextSaveKey,
+        structuredClone(mapSnapshot.mapLayers),
+        mapSnapshot.currentPos ? structuredClone(mapSnapshot.currentPos) : cloneDefaultCurrentPos(),
+        lastPlay,
+      );
+    }
+
+    const metas = await getAllIDBSavesMeta();
+    setAutoSaves(metas);
+    showToast(`「${duplicatedData.saveName as string}」を作成しました`);
   };
 
   const handleDeleteSave = async (key: string, displayName: string, e: React.MouseEvent) => {
@@ -3455,22 +3622,12 @@ ${currentMapJson}
       <div className={`${styles.welcomeContainer} fade-in`}>
         {isLoaded ? <img src={resolvePublicAssetPath(APP_LOGO_WIDE_PATH)} alt="ChatNoir" className={styles.welcomeLogo} /> : null}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <button className={styles.welcomeBtn} onClick={() => setGameState('SAVES')}>
+            物語で遊ぶ
+          </button>
+
           <button className={styles.welcomeBtn} onClick={() => router.push('/create')} style={{ background: 'linear-gradient(135deg, #f5f5f4, #fee2e2)', color: '#111', border: '1px solid rgba(255,255,255,0.8)' }}>
-            シナリオを作る
-          </button>
-
-          <button className={styles.welcomeBtn} onClick={() => { resetAllState(); setGameState('LOGIN'); }}>
-            新しく入室する
-          </button>
-
-          {autoSaves.length > 0 && (
-            <button className={styles.welcomeBtn} onClick={() => setGameState('SAVES')} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', fontSize: '0.9rem', padding: '0.8rem 2rem' }}>
-              続きから遊ぶ
-            </button>
-          )}
-
-          <button className={styles.welcomeBtn} onClick={handleLoadData} style={{ background: 'transparent', color: '#666', border: '1px solid #ccc', fontSize: '0.8rem', padding: '0.6rem 2rem' }}>
-            ファイルからロード
+            物語を作る
           </button>
         </div>
         {renderGlobalModals()}
@@ -3483,64 +3640,216 @@ ${currentMapJson}
       <div className="fade-in" style={{ minHeight: '100vh', width: '100vw', background: '#0a0a0a', color: '#fff', padding: '3rem 2rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <div style={{ width: '100%', maxWidth: '1000px', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '1rem' }}>
-            <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold', letterSpacing: '4px', display: 'flex', alignItems: 'center', gap: '12px', color: '#e0e0e0' }}>
-              シナリオ一覧
-            </h2>
-            <button onClick={() => setGameState('WELCOME')} style={{ background: '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', transition: 'all 0.2s' }}>
-              トップ画面へ戻る
-            </button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap', borderBottom: '1px solid #333', paddingBottom: '1rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold', letterSpacing: '4px', display: 'flex', alignItems: 'center', gap: '12px', color: '#e0e0e0' }}>
+                待機室
+              </h2>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button onClick={() => { resetAllState(); setShowLibrarySettings(false); setGameState('LOGIN'); }} style={{ background: '#e0e0e0', color: '#000', border: 'none', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold', letterSpacing: '1px' }}>
+                新しく遊ぶ
+              </button>
+              <button onClick={handleLoadData} style={{ background: 'transparent', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px' }}>
+                ファイルからロード
+              </button>
+              <button onClick={() => setShowLibrarySettings((prev) => !prev)} style={{ background: showLibrarySettings ? '#262626' : '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px' }}>
+                {showLibrarySettings ? '設定を閉じる' : '設定'}
+              </button>
+              <button onClick={() => { setShowLibrarySettings(false); setGameState('WELCOME'); }} style={{ background: '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', transition: 'all 0.2s' }}>
+                トップ画面へ戻る
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', width: '100%', marginTop: '1rem' }}>
-            {autoSaves.map(meta => (
-              <div key={meta.key} style={{ display: 'flex', flexDirection: 'column', width: '280px', background: '#161616', border: '1px solid #2a2a2a', borderRadius: '6px', overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
-                <div
-                  onClick={() => handleAutoSaveLoad(meta.key)}
-                  style={{ width: '100%', height: '160px', background: meta.coverImage ? `url(${resolvePublicAssetPath(meta.coverImage)}) center/cover` : '#222', cursor: 'pointer', position: 'relative' }}
-                >
-                  {!meta.coverImage && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: '0.8rem', letterSpacing: '2px' }}>NO IMAGE</div>}
-                </div>
-                <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <div
-                    style={{ color: '#fff', fontSize: '1.05rem', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '1px', cursor: 'pointer' }}
-                    title="クリックして名前を変更"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      const currentName = meta.saveName || meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, '');
-                      const newName = await showAppPrompt('セーブデータの名前を入力してください。', currentName, { title: 'セーブ名を変更', confirmLabel: '保存する' });
-                      if (newName && newName.trim()) {
-                        const data = await loadFromIDB<StoredGameState>(meta.key);
-                        if (data) {
-                          data.saveName = newName.trim();
-                          await saveToIDB(meta.key, data);
-                          setAutoSaves(prev => prev.map(m => m.key === meta.key ? { ...m, saveName: newName.trim() } : m));
-                        }
-                      }
-                    }}
-                  >
-                    {meta.saveName || meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, '')}
-                  </div>
-                  {meta.saveName && (
-                    <div style={{ color: '#777', fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, '')}
-                    </div>
-                  )}
-                  {meta.lastPlay && (
-                    <div style={{ color: '#555', fontSize: '0.65rem' }}>
-                      最終プレイ: {new Date(meta.lastPlay).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                    <button onClick={() => handleAutoSaveLoad(meta.key)} style={{ flex: 1, background: '#e0e0e0', color: '#000', border: 'none', padding: '6px 0', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer', marginRight: '8px' }}>プレイ再開</button>
-                    <button onClick={(e) => handleDeleteSave(meta.key, meta.saveName || meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, ''), e)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid rgba(255,68,68,0.4)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer' }}>削除</button>
-                  </div>
+          {showLibrarySettings && (
+            <div style={{ background: '#121212', border: '1px solid #2a2a2a', borderRadius: '10px', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', boxShadow: '0 12px 40px rgba(0,0,0,0.25)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1rem', letterSpacing: '1.5px', color: '#f5f5f5' }}>プレイ設定</h3>
                 </div>
               </div>
-            ))}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                  <label htmlFor="library-api-key" style={{ fontSize: '0.8rem', color: '#bdbdbd', letterSpacing: '0.8px' }}>Google AI Studio API Key</label>
+                  <input
+                    id="library-api-key"
+                    type="password"
+                    name="libraryApiKey"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="Google AI Studio API Key"
+                    style={{ width: '100%', padding: '0.85rem 0.95rem', background: '#0d0d0d', color: '#f5f5f5', border: '1px solid #2f2f2f', borderRadius: '6px', fontFamily: 'inherit' }}
+                  />
+                  <p style={{ margin: 0, fontSize: '0.72rem', color: '#7a7a7a', lineHeight: 1.7 }}>
+                    入力した API キーは GitHub には保存されず、このブラウザ内だけで扱われます。
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                  <label htmlFor="library-api-key-storage-mode" style={{ fontSize: '0.8rem', color: '#bdbdbd', letterSpacing: '0.8px' }}>APIキーの保存方法</label>
+                  <select
+                    id="library-api-key-storage-mode"
+                    name="libraryApiKeyStorageMode"
+                    value={apiKeyStorageMode}
+                    onChange={(e) => {
+                      const nextMode = e.target.value;
+                      if (!isApiKeyStorageMode(nextMode)) return;
+                      setApiKeyStorageMode(nextMode);
+                      persistApiKey(apiKey, nextMode);
+                    }}
+                    style={{ width: '100%', padding: '0.85rem 0.95rem', background: '#0d0d0d', color: '#f5f5f5', border: '1px solid #2f2f2f', borderRadius: '6px', fontFamily: 'inherit' }}
+                  >
+                    <option value="session">一時保存: ブラウザを閉じると消える（推奨）</option>
+                    <option value="local">この端末に保存: 次回も自動入力する</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                  <label htmlFor="library-selected-model" style={{ fontSize: '0.8rem', color: '#bdbdbd', letterSpacing: '0.8px' }}>AIモデル</label>
+                  <select
+                    id="library-selected-model"
+                    name="librarySelectedModel"
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    style={{ width: '100%', padding: '0.85rem 0.95rem', background: '#0d0d0d', color: '#f5f5f5', border: '1px solid #2f2f2f', borderRadius: '6px', fontFamily: 'inherit' }}
+                  >
+                    <option value="gemma-4-31b-it">Gemma 4 31B（推奨）</option>
+                    <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
+                    <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite（軽量・安定）</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', paddingTop: '0.5rem', borderTop: '1px solid #222', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: '0.84rem', color: '#ddd', letterSpacing: '0.8px' }}>フォールバック</div>
+                  <p style={{ margin: '0.35rem 0 0', fontSize: '0.74rem', color: '#777', lineHeight: 1.6 }}>
+                    混雑時に別モデルへ自動切替します。
+                  </p>
+                </div>
+                <div onClick={() => setFallbackEnabled(!fallbackEnabled)} style={{ width: '40px', height: '20px', background: fallbackEnabled ? '#4a7c59' : '#3a3a3a', borderRadius: '20px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s', flexShrink: 0 }}>
+                  <div style={{ position: 'absolute', top: '2px', left: fallbackEnabled ? '22px' : '2px', width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s' }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 1fr) minmax(220px, 280px)', gap: '1rem', width: '100%', marginTop: '1rem', alignItems: 'end' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+              <label htmlFor="scenario-filter-select" style={{ fontSize: '0.78rem', color: '#a3a3a3', letterSpacing: '0.8px' }}>シナリオ名で絞り込み</label>
+              <select
+                id="scenario-filter-select"
+                name="scenarioFilterSelect"
+                value={selectedScenarioFilter}
+                onChange={(e) => setSelectedScenarioFilter(e.target.value)}
+                style={{ width: '100%', padding: '0.85rem 0.95rem', background: '#0d0d0d', color: '#f5f5f5', border: '1px solid #2f2f2f', borderRadius: '6px', fontFamily: 'inherit' }}
+              >
+                <option value="all">すべてのシナリオ</option>
+                {scenarioFilterOptions.map((title) => (
+                  <option key={title} value={title}>{title}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+              <label htmlFor="save-sort-order" style={{ fontSize: '0.78rem', color: '#a3a3a3', letterSpacing: '0.8px' }}>プレイ日で並べ替え</label>
+              <select
+                id="save-sort-order"
+                name="saveSortOrder"
+                value={saveSortOrder}
+                onChange={(e) => {
+                  const nextOrder = e.target.value;
+                  if (nextOrder === 'newest' || nextOrder === 'oldest') {
+                    setSaveSortOrder(nextOrder);
+                  }
+                }}
+                style={{ width: '100%', padding: '0.85rem 0.95rem', background: '#0d0d0d', color: '#f5f5f5', border: '1px solid #2f2f2f', borderRadius: '6px', fontFamily: 'inherit' }}
+              >
+                <option value="newest">プレイ日が新しい順</option>
+                <option value="oldest">プレイ日が古い順</option>
+              </select>
+            </div>
           </div>
 
-          {autoSaves.length === 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem', width: '100%' }}>
+              {visibleAutoSaves.map((meta) => {
+                const isPinned = pinnedSaveKeys.includes(meta.key);
+                const scenarioDisplayTitle = meta.scenarioTitle?.trim() || '名称未設定';
+                const statusChipStyle = meta.statusTone === 'success'
+                  ? { color: '#bbf7d0', border: '1px solid rgba(34,197,94,0.28)', background: 'rgba(34,197,94,0.12)' }
+                  : meta.statusTone === 'warning'
+                    ? { color: '#fde68a', border: '1px solid rgba(245,158,11,0.28)', background: 'rgba(245,158,11,0.12)' }
+                    : meta.statusTone === 'info'
+                      ? { color: '#bfdbfe', border: '1px solid rgba(59,130,246,0.28)', background: 'rgba(59,130,246,0.12)' }
+                      : { color: '#d4d4d4', border: '1px solid rgba(212,212,212,0.18)', background: 'rgba(255,255,255,0.04)' };
+                return (
+                  <div key={meta.key} style={{ display: 'flex', flexDirection: 'column', minWidth: 0, background: '#161616', border: isPinned ? '1px solid rgba(250, 204, 21, 0.45)' : '1px solid #2a2a2a', borderRadius: '6px', overflow: 'hidden', boxShadow: isPinned ? '0 8px 24px rgba(250,204,21,0.12)' : '0 4px 20px rgba(0,0,0,0.5)' }}>
+                    <div
+                      onClick={() => handleAutoSaveLoad(meta.key)}
+                      style={{ width: '100%', height: '160px', background: meta.coverImage ? `url(${resolvePublicAssetPath(meta.coverImage)}) center/cover` : '#222', cursor: 'pointer', position: 'relative' }}
+                    >
+                      {!meta.coverImage && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: '0.8rem', letterSpacing: '2px' }}>NO IMAGE</div>}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePinnedSave(meta.key);
+                        }}
+                        title={isPinned ? 'ピンを外す' : 'ピン止め'}
+                        aria-label={isPinned ? 'ピンを外す' : 'ピン止め'}
+                        style={{ position: 'absolute', top: '10px', right: '10px', width: '34px', height: '34px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '999px', border: isPinned ? '1px solid rgba(250, 204, 21, 0.45)' : '1px solid rgba(255,255,255,0.18)', background: isPinned ? 'rgba(250, 204, 21, 0.16)' : 'rgba(17,17,17,0.55)', color: isPinned ? '#facc15' : '#f5f5f5', cursor: 'pointer', backdropFilter: 'blur(4px)' }}
+                      >
+                        <IconPin filled={isPinned} />
+                      </button>
+                    </div>
+                    <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <div style={{ color: '#8a8a8a', fontSize: '0.72rem', letterSpacing: '0.8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {scenarioDisplayTitle}
+                      </div>
+                      {meta.statusLabel && (
+                        <div style={{ alignSelf: 'flex-start', fontSize: '0.68rem', letterSpacing: '0.8px', borderRadius: '999px', padding: '0.22rem 0.58rem', ...statusChipStyle }}>
+                          {meta.statusLabel}
+                        </div>
+                      )}
+                      <div
+                        style={{ color: '#fff', fontSize: '1.05rem', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '1px', cursor: 'pointer' }}
+                        title="クリックして名前を変更"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const currentName = meta.saveName || meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, '');
+                          const newName = await showAppPrompt('セーブデータの名前を入力してください。', currentName, { title: 'セーブ名を変更', confirmLabel: '保存する' });
+                          if (newName && newName.trim()) {
+                            const data = await loadFromIDB<StoredGameState>(meta.key);
+                            if (data) {
+                              data.saveName = newName.trim();
+                              await saveToIDB(meta.key, data);
+                              setAutoSaves(prev => prev.map(m => m.key === meta.key ? { ...m, saveName: newName.trim() } : m));
+                            }
+                          }
+                        }}
+                      >
+                        {meta.saveName || meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, '')}
+                      </div>
+                      {meta.lastPlay && (
+                        <div style={{ color: '#555', fontSize: '0.65rem' }}>
+                          最終プレイ: {new Date(meta.lastPlay).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      )}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '8px', marginTop: '4px' }}>
+                        <button onClick={() => handleAutoSaveLoad(meta.key)} style={{ background: '#e0e0e0', color: '#000', border: 'none', padding: '6px 0', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer' }}>プレイ再開</button>
+                        <button onClick={(e) => { void handleDuplicateSave(meta, e); }} style={{ background: 'transparent', color: '#d4d4d4', border: '1px solid rgba(212,212,212,0.24)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer' }}>複製</button>
+                        <button onClick={(e) => handleDeleteSave(meta.key, meta.saveName || meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, ''), e)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid rgba(255,68,68,0.4)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer' }}>削除</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {visibleAutoSaves.length === 0 && (
             <div style={{ padding: '4rem', textAlign: 'center', color: '#555', letterSpacing: '2px' }}>
               現在保存されているシナリオはありません
             </div>
@@ -3552,7 +3861,7 @@ ${currentMapJson}
     );
   }
 
-  // --- APIキー入力・ファイルアップロード画面 ---
+  // --- シナリオ準備画面 ---
   if (gameState === 'LOGIN') {
     const dynamicStyles = `
       :root {
@@ -3587,10 +3896,10 @@ ${currentMapJson}
         <div className={`${styles.loginCard} fade-in`}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1.5rem' }}>
             <button
-              onClick={() => setGameState('WELCOME')}
+              onClick={() => setGameState('SAVES')}
               style={{ background: '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', transition: 'all 0.2s' }}
             >
-              トップ画面へ戻る
+              待機室へ戻る
             </button>
           </div>
           <div style={{ width: '100%', marginBottom: '1.5rem', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -3658,7 +3967,7 @@ ${currentMapJson}
                         style={{ width: '120px', height: 'auto', borderRadius: '4px', border: scenarioTitle === s.title ? '2px solid #fff' : '1px solid #333', marginBottom: '6px', boxShadow: '0 4px 10px rgba(0,0,0,0.3)' }} 
                       />
                     ) : (
-                      <div style={{ width: '120px', height: '160px', borderRadius: '4px', background: '#222', border: '1px solid #333', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: '#555' }}>NO IMAGE</div>
+                      <div style={{ width: '120px', aspectRatio: '16 / 9', borderRadius: '4px', background: '#222', border: '1px solid #333', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: '#555' }}>NO IMAGE</div>
                     )}
                   </div>
                   <div style={{ 
@@ -3683,69 +3992,6 @@ ${currentMapJson}
           </div>
 
           <div className={styles.inputWrapper}>
-            <input
-              type="password"
-              name="apiKey"
-              className={styles.input}
-              placeholder="Google AI Studio API Key"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-
-            <div style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: '8px', padding: '0.9rem 1rem', marginBottom: '0.9rem' }}>
-              <p style={{ fontSize: '0.76rem', color: '#111', marginBottom: '0.45rem', fontWeight: 700, letterSpacing: '0.6px' }}>
-                APIキーの保存について
-              </p>
-              <p style={{ fontSize: '0.72rem', color: '#444', lineHeight: 1.7, margin: 0 }}>
-                入力したAPIキーは GitHub やこのサイトのセーブデータには保存されません。
-              </p>
-            </div>
-
-            <div style={{ marginBottom: '0.9rem' }}>
-              <label htmlFor="api-key-storage-mode" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>APIキーの保存方法</label>
-              <select
-                id="api-key-storage-mode"
-                name="apiKeyStorageMode"
-                value={apiKeyStorageMode}
-                onChange={(e) => {
-                  const nextMode = e.target.value;
-                  if (!isApiKeyStorageMode(nextMode)) return;
-                  setApiKeyStorageMode(nextMode);
-                  persistApiKey(apiKey, nextMode);
-                }}
-                style={{ width: '100%', padding: '0.8rem', background: 'rgba(255,255,255,0.5)', color: '#111', border: '1px solid rgba(0,0,0,0.15)', borderRadius: '2px', fontFamily: 'inherit' }}
-              >
-                <option value="session">一時保存: ブラウザを閉じると消える（推奨）</option>
-                <option value="local">この端末に保存: 次回も自動入力する</option>
-              </select>
-              <p style={{ fontSize: '0.72rem', color: '#666', lineHeight: 1.7, marginTop: '0.45rem', marginBottom: 0 }}>
-                一時保存は sessionStorage、端末保存は localStorage を使います。どちらもこのブラウザ内だけに保存されます。
-              </p>
-            </div>
-
-            <label htmlFor="selected-model" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>AIモデル</label>
-            <select
-              id="selected-model"
-              name="selectedModel"
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              style={{ width: '100%', padding: '0.8rem', background: 'rgba(255,255,255,0.5)', color: '#111', border: '1px solid rgba(0,0,0,0.15)', borderRadius: '2px', fontFamily: 'inherit' }}
-            >
-              <option value="gemma-4-31b-it">Gemma 4 31B（推奨）</option>
-              <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
-              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite（軽量・安定）</option>
-            </select>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
-              <span style={{ fontSize: '0.8rem', color: '#555' }}>フォールバック（混雑時に自動で別モデルへ切替）</span>
-              <div
-                onClick={() => setFallbackEnabled(!fallbackEnabled)}
-                style={{ width: '40px', height: '20px', background: fallbackEnabled ? '#4a7c59' : '#ccc', borderRadius: '20px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s', flexShrink: 0 }}
-              >
-                <div style={{ position: 'absolute', top: '2px', left: fallbackEnabled ? '22px' : '2px', width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s' }} />
-              </div>
-            </div>
-
             <div style={{ marginTop: '1rem' }}>
               <label htmlFor="save-name" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>プロジェクト名（必須）</label>
               <input
@@ -4335,9 +4581,9 @@ ${currentMapJson}
                       </div>
                     </div>
                     {endingPhase === 'NONE' && !hasEndingMarker && (
-                      <button onClick={() => { void forceCloseCurtain(); }} disabled={isLoading} style={{ background: 'rgba(120, 22, 22, 0.14)', color: 'var(--accent-red)', border: '1px solid var(--accent-red)', padding: '8px', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center', opacity: isLoading ? 0.5 : 1 }}>幕を閉じる</button>
+                      <button onClick={() => { void forceCloseCurtain(); }} disabled={isLoading || isCurtainCloseLocked} title={isCurtainCloseLocked ? 'プロローグ確認後に使用できます' : undefined} style={{ background: 'rgba(120, 22, 22, 0.14)', color: 'var(--accent-red)', border: '1px solid var(--accent-red)', padding: '8px', borderRadius: '4px', cursor: isLoading || isCurtainCloseLocked ? 'not-allowed' : 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center', opacity: isLoading || isCurtainCloseLocked ? 0.5 : 1 }}>幕を閉じる</button>
                     )}
-                    <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>シナリオ選択画面へ</button>
+                    <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>待機室へ</button>
                     <button onClick={async () => {
                       if (await showAppConfirm("トップ画面へ戻りますか？（現在の進行状況は自動セーブされています）", { title: 'トップ画面へ戻る' })) {
                         setGameState('WELCOME'); 
