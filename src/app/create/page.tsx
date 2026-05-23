@@ -50,6 +50,14 @@ type ArtifactRecord = Partial<Record<GenerationPhaseId, GenerationArtifact>>;
 type PhaseVisibilityRecord = Record<GenerationPhaseId, boolean>;
 type ParsedFinalScenario = ReturnType<typeof parseFinalScenarioPackage>;
 
+type AppConfirmState = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  danger?: boolean;
+};
+
 type ScenarioCreateDraft = {
   selectedModel: string;
   executionMode: ExecutionMode;
@@ -491,6 +499,33 @@ export default function ScenarioCreatePage() {
   const [scenarioFileStem, setScenarioFileStem] = useState('scenario');
   const [finalScenario, setFinalScenario] = useState<ParsedFinalScenario | null>(null);
 
+  const [appConfirm, setAppConfirm] = useState<AppConfirmState | null>(null);
+  const confirmResolverRef = useRef<((value: boolean) => void) | null>(null);
+
+  const showAppConfirm = (
+    message: string,
+    options: Partial<Omit<AppConfirmState, 'message'>> = {},
+  ) => {
+    return new Promise<boolean>((resolve) => {
+      confirmResolverRef.current?.(false);
+      confirmResolverRef.current = resolve;
+      setAppConfirm({
+        title: options.title ?? '確認',
+        message,
+        confirmLabel: options.confirmLabel ?? 'OK',
+        cancelLabel: options.cancelLabel ?? 'キャンセル',
+        danger: options.danger ?? false,
+      });
+    });
+  };
+
+  const closeAppConfirm = (result: boolean) => {
+    const resolve = confirmResolverRef.current;
+    confirmResolverRef.current = null;
+    setAppConfirm(null);
+    resolve?.(result);
+  };
+
   const mediaSummary = useMemo(
     () => summarizeAttachments(attachments.map(({ id, name, mimeType, sizeBytes, kind }) => ({ id, name, mimeType, sizeBytes, kind }))),
     [attachments],
@@ -716,8 +751,8 @@ export default function ScenarioCreatePage() {
     setFinalScenario(null);
   };
 
-  const handleResetDraft = () => {
-    if (!window.confirm('シナリオ生成ページの状態をリセットします。よろしいですか？')) return;
+  const handleResetDraft = async () => {
+    if (!(await showAppConfirm('リセットします。よろしいですか？', { title: 'リセット', danger: true, confirmLabel: 'リセット' }))) return;
     clearStoredCreateDraft();
     resetDraftState();
   };
@@ -1417,7 +1452,7 @@ export default function ScenarioCreatePage() {
         <header className={styles.header}>
           <div className={styles.headerCopy}>
             <div className={styles.titleRow}>
-              <h1 className={styles.title}>シナリオを作る</h1>
+              <h1 className={styles.title}>物語を作る</h1>
               <span className={styles.betaBadge}>BETA</span>
             </div>
           </div>
@@ -1616,7 +1651,7 @@ export default function ScenarioCreatePage() {
                                 </div>
                               </div>
                               <button type="button" className={styles.smallButton} onClick={() => setAttachments((prev) => prev.filter((item) => item.id !== attachment.id))}>
-                                添付を外す
+                                削除
                               </button>
                             </div>
                           ))}
@@ -1783,6 +1818,19 @@ export default function ScenarioCreatePage() {
           </aside>
         </div>
       </div>
+
+      {appConfirm && (
+        <div onClick={() => closeAppConfirm(false)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px', backdropFilter: 'blur(6px)' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--glass-bg, rgba(255,255,255,0.9))', backdropFilter: 'blur(24px)', border: '1px solid var(--glass-border, rgba(0,0,0,0.1))', padding: '24px', borderRadius: '12px', width: '100%', maxWidth: '420px', boxShadow: '0 12px 40px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ margin: 0, color: 'var(--text-main, #111)', fontSize: '1rem', letterSpacing: '1.6px' }}>{appConfirm.title}</h3>
+            <p style={{ margin: '0.8rem 0 1.5rem', color: 'var(--text-main, #111)', fontSize: '0.92rem', lineHeight: 1.75, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{appConfirm.message}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button onClick={() => closeAppConfirm(false)} style={{ background: 'transparent', color: 'var(--text-main, #111)', border: '1px solid var(--glass-border, rgba(0,0,0,0.15))', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px' }}>{appConfirm.cancelLabel}</button>
+              <button onClick={() => closeAppConfirm(true)} style={{ background: appConfirm.danger ? '#b91c1c' : '#111', color: '#fff', border: 'none', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px', fontWeight: 700 }}>{appConfirm.confirmLabel}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
