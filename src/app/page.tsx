@@ -1,6 +1,7 @@
 'use client';
 /* eslint-disable @next/next/no-img-element */
 import React, { useState, useEffect, useRef, useMemo, useImperativeHandle, useEffectEvent } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import '@xyflow/react/dist/style.css';
 import MapFlowCanvas, { MAP_NODE_LEGEND_ITEMS } from '@/components/MapFlowCanvas';
@@ -52,6 +53,7 @@ const IDB_STORE = 'chatnoir_saves';
 const SCENARIO_STORE = 'scenario_master';
 const API_KEY_STORAGE_KEY = 'chatnoir_apiKey';
 const API_KEY_STORAGE_MODE_KEY = 'chatnoir_apiKeyStorageMode';
+const MAP_SNAPSHOT_STORAGE_PREFIX = 'chatnoir_map_snapshot_';
 const SUPPORT_AVATAR_PATH = 'Chibi-style_close-up_face_portrait_of_an_anime_gir-1775997248547.png';
 const DEFAULT_SUPPORT_PERSONA_PATH = 'support-personas/lore-support.md';
 const DEFAULT_SAMPLE_COVER_PATH = 'package.png';
@@ -241,6 +243,7 @@ const FileUploadTrigger = ({
 };
 
 type GameState = 'WELCOME' | 'SAVES' | 'LOGIN' | 'BRIEFING' | 'PLAYING';
+type OpeningFlowStage = 'NONE' | 'PROLOGUE' | 'INTRODUCTION' | 'MAIN';
 type EndingPhase = 'NONE' | 'READY_TO_END' | 'FADE_OUT' | 'MENU' | 'REVIEW';
 type ThemeMode = 'light' | 'dark';
 type FontFamily = 'serif' | 'sans' | 'klee';
@@ -328,6 +331,7 @@ interface SidebarOpenSections {
 
 interface StoredGameState {
   gameState?: GameState;
+  openingFlowStage?: OpeningFlowStage;
   messages?: AppMessage[];
   gmRuleText?: string;
   supportPersonaPath?: string;
@@ -367,6 +371,12 @@ interface StoredGameState {
   lastPlay?: string;
 }
 
+interface StoredMapSnapshot {
+  mapLayers?: Record<string, GraphMapLayer>;
+  currentPos?: MapCurrentPos;
+  lastPlay?: string;
+}
+
 type ApiKeyStorageMode = 'session' | 'local';
 
 interface SpecialCommandPayload {
@@ -381,7 +391,6 @@ interface SpecialCommandPayload {
 type SupportStorySnapshot = {
   visibleMsgCount: number;
   gmMsgCount: number;
-  openMysteries: string[];
 };
 
 type SupportResponseResult = {
@@ -561,7 +570,6 @@ const normalizeSupportStorySnapshot = (value: unknown): SupportStorySnapshot | n
   return {
     visibleMsgCount,
     gmMsgCount,
-    openMysteries: toStringArray(value.openMysteries)
   };
 };
 
@@ -622,9 +630,13 @@ const normalizeScenarioMasterData = (title: string, value: unknown): ScenarioMas
 const normalizeStoredGameState = (value: unknown): StoredGameState => {
   const record = isRecord(value) ? value : {};
   const rawMonologueData = record.monologueData;
+  const openingFlowStage = record.openingFlowStage;
 
   return {
     gameState: isGameState(record.gameState) ? record.gameState : undefined,
+    openingFlowStage: openingFlowStage === 'NONE' || openingFlowStage === 'PROLOGUE' || openingFlowStage === 'INTRODUCTION' || openingFlowStage === 'MAIN'
+      ? openingFlowStage
+      : undefined,
     messages: toMessageArray(record.messages),
     gmRuleText: getString(record.gmRuleText),
     supportPersonaPath: getString(record.supportPersonaPath),
@@ -808,6 +820,44 @@ async function getAllIDBSavesMeta(): Promise<AutoSaveMeta[]> {
   } catch { return []; }
 }
 
+const getMapSnapshotStorageKey = (saveKey: string) => `${MAP_SNAPSHOT_STORAGE_PREFIX}${saveKey}`;
+
+const persistMapSnapshot = (saveKey: string, mapLayers: Record<string, GraphMapLayer>, currentPos: MapCurrentPos, lastPlay: string) => {
+  try {
+    localStorage.setItem(getMapSnapshotStorageKey(saveKey), JSON.stringify({ mapLayers, currentPos, lastPlay } satisfies StoredMapSnapshot));
+  } catch {
+    // localStorage is only a best-effort fallback for close timing races.
+  }
+};
+
+const loadMapSnapshot = (saveKey?: string): StoredMapSnapshot | null => {
+  if (!saveKey) return null;
+
+  try {
+    const raw = localStorage.getItem(getMapSnapshotStorageKey(saveKey));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    const normalized = normalizeStoredMapState(parsed);
+    const lastPlay = getString(isRecord(parsed) ? parsed.lastPlay : undefined);
+
+    return {
+      mapLayers: normalized.layers,
+      currentPos: normalized.currentPos,
+      lastPlay,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const deleteMapSnapshot = (saveKey: string) => {
+  try {
+    localStorage.removeItem(getMapSnapshotStorageKey(saveKey));
+  } catch {
+    // Ignore storage cleanup failures.
+  }
+};
+
 async function scrubApiKeysFromIDB(): Promise<void> {
   try {
     const db = await getIDB();
@@ -989,6 +1039,7 @@ export default function ChatNoir() {
   const [apiKeyStorageMode, setApiKeyStorageMode] = useState<ApiKeyStorageMode>(() => readStoredApiKey().mode);
   // ゲームの進行ステータス
   const [gameState, setGameState] = useState<GameState>('WELCOME');
+  const [openingFlowStage, setOpeningFlowStage] = useState<OpeningFlowStage>('NONE');
   const [endingPhase, setEndingPhase] = useState<EndingPhase>('NONE');
   const [reviewMessages, setReviewMessages] = useState<AppMessage[]>([]);
   const [reviewInputText, setReviewInputText] = useState('');
@@ -1057,7 +1108,7 @@ export default function ChatNoir() {
 
   // 選択されたモデル・フォールバック設定
   const [selectedModel, setSelectedModel] = useState('gemma-4-31b-it');
-  const [fallbackEnabled, setFallbackEnabled] = useState(false);
+  const [fallbackEnabled, setFallbackEnabled] = useState(true);
 
   // サイドバーの開閉状態
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -1123,7 +1174,7 @@ export default function ChatNoir() {
     }, 0);
 
     return () => window.clearTimeout(timerId);
-  }, [Boolean(appPrompt)]);
+  }, [appPrompt]);
 
   const showAppAlert = (message: string, title = 'お知らせ') => {
     setAppAlert({ title, message });
@@ -1183,8 +1234,17 @@ export default function ChatNoir() {
     resolve?.(result);
   };
 
-  const renderGlobalModals = () => (
-    <>
+  const renderGlobalModals = () => {
+    if (!appAlert && !appConfirm && !appPrompt) {
+      return null;
+    }
+
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    return createPortal(
+      <>
       {appAlert && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px', backdropFilter: 'blur(6px)' }}>
           <div className="fade-in" style={{ width: '100%', maxWidth: '520px', background: 'var(--sidebar-bg, rgba(250,250,250,0.96))', border: '1px solid var(--border-color, rgba(0,0,0,0.15))', borderRadius: '12px', boxShadow: '0 18px 48px rgba(0,0,0,0.38)', padding: '1.4rem 1.4rem 1.2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -1245,8 +1305,10 @@ export default function ChatNoir() {
           </div>
         </div>
       )}
-    </>
-  );
+      </>,
+      document.body
+    );
+  };
 
   const reloadSupportPersonaPrompt = () => {
     setSupportPersonaPrompt('');
@@ -1333,6 +1395,10 @@ export default function ChatNoir() {
   const [recoverableSend, setRecoverableSend] = useState<RecoverableSendState | null>(null);
   const recoverableSendRef = useRef<RecoverableSendState | null>(null);
   const gmMessageCount = messages.filter(message => message.isGm).length;
+  const hasEndingMarker = messages.some(message => message?.parts?.[0]?.text?.includes('【終】'));
+  const canUseSupportAssistant = gameState === 'PLAYING' && messages.length > 2;
+  const canUseNotebookSidebar = gameState === 'PLAYING' && messages.length > 2;
+  const hasReviewConversation = reviewMessages.length > messages.length;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<ChatInputHandle>(null);
@@ -1540,10 +1606,40 @@ export default function ChatNoir() {
     }
   };
 
-  const restoreStateData = (raw: unknown, targetGameState?: GameState) => {
+  const buildInitialPrologueHistory = (): AppMessage[] => {
+    const outText = prologueText ? prologueText : '（※プロローグファイルが読み込まれていません。行動を入力して開始してください）';
+
+    return [
+      { role: 'user', parts: [{ text: '（システム起動：ゲーム開始。プロローグが読み込まれました）' }] },
+      { role: 'model', parts: [{ text: '# プロローグ\n\n' + outText }] },
+    ];
+  };
+
+  const restoreStateData = (raw: unknown, targetGameState?: GameState, saveKey?: string) => {
     const parsed = normalizeStoredGameState(raw);
+    const storedMapState = normalizeStoredMapState(raw);
+    const fallbackMapSnapshot = loadMapSnapshot(saveKey);
+    const shouldPreferSnapshot = Boolean(
+      fallbackMapSnapshot?.mapLayers
+      && fallbackMapSnapshot.lastPlay
+      && (!parsed.lastPlay || fallbackMapSnapshot.lastPlay > parsed.lastPlay)
+    );
+    const restoredMapState = shouldPreferSnapshot
+      ? {
+          layers: fallbackMapSnapshot!.mapLayers!,
+          currentPos: fallbackMapSnapshot!.currentPos,
+        }
+      : storedMapState;
+
     // 明示的な指定があればそれを使用、なければ保存されたもの、それもなければPLAYING
     const nextState = targetGameState || parsed.gameState || 'PLAYING';
+    const nextOpeningFlowStage = parsed.openingFlowStage
+      || (nextState === 'BRIEFING' ? 'INTRODUCTION' : ((parsed.messages?.length || 0) <= 2 ? 'PROLOGUE' : 'MAIN'));
+    const restoredMessages = (parsed.messages && parsed.messages.length > 0)
+      ? parsed.messages
+      : ((nextState === 'BRIEFING' || nextOpeningFlowStage === 'PROLOGUE' || nextOpeningFlowStage === 'INTRODUCTION')
+        ? buildInitialPrologueHistory()
+        : []);
     const shouldOpenGmModal = parsed.isGmModalOpen === true;
     const shouldOpenSupportSidebar = parsed.isSupportSidebarOpen === true;
     const shouldOpenSupportModal = !shouldOpenSupportSidebar && parsed.isSupportModalOpen === true;
@@ -1551,7 +1647,8 @@ export default function ChatNoir() {
     scenarioDebugSessionRef.current += 1;
     debugAutomatedMessageRef.current = false;
     setGameState(nextState);
-    setMessages(parsed.messages || []);
+    setOpeningFlowStage(nextOpeningFlowStage);
+    setMessages(restoredMessages);
     setRecoverableSendState(null);
     setGmRuleText(parsed.gmRuleText || '');
     setSupportPersonaPath(parsed.supportPersonaPath || DEFAULT_SUPPORT_PERSONA_PATH);
@@ -1595,7 +1692,6 @@ export default function ChatNoir() {
     setIsSupportModalOpen(shouldOpenSupportModal);
     setSupportScrollTarget(null);
     setIsScenarioDebugMode(false);
-    const restoredMapState = normalizeStoredMapState(raw);
     setMapLayers(restoredMapState.layers);
     setCurrentPos(restoredMapState.currentPos || cloneDefaultCurrentPos());
     setActiveLayer(restoredMapState.currentPos?.layer || Object.keys(restoredMapState.layers)[0] || DEFAULT_MAP_LAYER_NAME);
@@ -1603,8 +1699,8 @@ export default function ChatNoir() {
     // 復元後、DOMのレンダリングを待ってから最新メッセージへスクロール
     setTimeout(() => scrollToBottom(), 150);
   };
-  const restoreStateDataEffect = useEffectEvent((parsed: unknown, targetGameState?: GameState) => {
-    restoreStateData(parsed, targetGameState);
+  const restoreStateDataEffect = useEffectEvent((parsed: unknown, targetGameState?: GameState, saveKey?: string) => {
+    restoreStateData(parsed, targetGameState, saveKey);
   });
 
   // GameStateをsessionStorageへ保存（リロード時のUI状態維持）
@@ -1683,7 +1779,7 @@ export default function ChatNoir() {
         const autoSavedData = await loadFromIDB<StoredGameState>(currentKey as string);
         if (autoSavedData) {
           // リロード時は保存されているデータと状態を復元
-          restoreStateDataEffect(autoSavedData, savedGameState || autoSavedData.gameState);
+          restoreStateDataEffect(autoSavedData, savedGameState || autoSavedData.gameState, currentKey as string);
           showToast('セッションから復帰しました');
         } else if (savedGameState) {
           setGameState(savedGameState);
@@ -1708,11 +1804,12 @@ export default function ChatNoir() {
   useEffect(() => {
     // 復元が終わる前に上書き保存されるのを防ぐため、isLoadedチェック
     if (isLoaded && gameState !== 'WELCOME' && gameState !== 'SAVES' && gameState !== 'LOGIN') {
+      const lastPlay = new Date().toISOString();
       const currentData = {
-        gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage,
+        gameState, openingFlowStage, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage,
         charactersData, factsData, mysteriesData, monologueData, playerMemo, openSections, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen,
         mapLayers, currentPos, fallbackEnabled,
-        lastPlay: new Date().toISOString()
+        lastPlay
       };
 
       const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
@@ -1720,10 +1817,44 @@ export default function ChatNoir() {
       if (!sessionRunId || !fileNameTitle) return;
 
       const runKey = `auto_save_${fileNameTitle}_${sessionRunId}`;
+      persistMapSnapshot(runKey, mapLayers, currentPos, lastPlay);
       sessionStorage.setItem('chatnoir-current-save-key', runKey);
       saveToIDB(runKey, currentData);
     }
-  }, [isLoaded, gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, openSections, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen, mapLayers, currentPos, fallbackEnabled]);
+  }, [isLoaded, gameState, openingFlowStage, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, openSections, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen, mapLayers, currentPos, fallbackEnabled]);
+
+  const flushMapSnapshotEffect = useEffectEvent(() => {
+    if (!isLoaded || gameState === 'WELCOME' || gameState === 'SAVES' || gameState === 'LOGIN') {
+      return;
+    }
+
+    const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
+    if (!sessionRunId || !fileNameTitle) return;
+
+    const runKey = `auto_save_${fileNameTitle}_${sessionRunId}`;
+    const lastPlay = new Date().toISOString();
+    persistMapSnapshot(runKey, mapLayers, currentPos, lastPlay);
+  });
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      flushMapSnapshotEffect();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushMapSnapshotEffect();
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -2005,22 +2136,13 @@ export default function ChatNoir() {
     });
     getAllScenarioMasters().then(setMasterScenarios);
 
-    // いきなりゲームを開始せず、まずはブリーフィング画面へ進む
-    setGameState('BRIEFING');
-    
-    // 画面遷移時に一番上（先頭）が表示されるようにスクロール位置をリセット（DOM更新後に行うためsetTimeout）
-    setTimeout(() => {
-      window.scrollTo(0, 0);
-      if (scrollRef.current) {
-        scrollRef.current.scrollTop = 0;
-        scrollRef.current.scrollLeft = 0;
-      }
-    }, 100);
+    startInitialChat();
   };
 
-  // ブリーフィング画面で「物語を始める」を押した時の処理（プロローグだけ表示）
+  // 新規ゲーム開始時にプロローグだけ表示する
   const startInitialChat = () => {
     setGameState('PLAYING');
+    setOpeningFlowStage('PROLOGUE');
     
     // 初回起動時の強制一番下スクロール（useEffect）が誤ってはたらくのを防ぐフラグ
     isInitialScrollDone.current = true;
@@ -2034,20 +2156,17 @@ export default function ChatNoir() {
       }
     }, 200);
 
-    const outText = prologueText ? prologueText : "（※プロローグファイルが読み込まれていません。行動を入力して開始してください）";
-
-    // プロローグをチャット履歴に配置（AIの最初の発言として）
-    const initialHistory: AppMessage[] = [
-      { role: 'user', parts: [{ text: "（システム起動：ゲーム開始。プロローグが読み込まれました）" }] },
-      { role: 'model', parts: [{ text: "# プロローグ\n\n" + outText }] },
-    ];
-
-    setMessages(initialHistory);
+    setMessages(buildInitialPrologueHistory());
     // この時点ではAIへの通信は行わない。プレイヤーがプロローグを読み終えるのを待つ。
+  };
+
+  const openIntroduction = () => {
+    setOpeningFlowStage('INTRODUCTION');
   };
 
   // プレイヤーがプロローグを読み終え、「物語に入る」を押した時の処理
   const startPhase2 = async () => {
+    setOpeningFlowStage('MAIN');
     setIsLoading(true);
 
     // メインゲーム開始のシステム通知を履歴に追加
@@ -2096,6 +2215,7 @@ export default function ChatNoir() {
         // 開発時のエラーオーバーレイ表示を避けるため、想定内のAPIエラーはconsole.warnに留める
         console.warn(`${displayMsg} (API Response: ${errorStr})`);
         // メッセージ履歴をプロローグ後に戻す（以前の状態を保持していた messages を使用）
+        setOpeningFlowStage('INTRODUCTION');
         setMessages(messages);
       }
     } catch (err: unknown) {
@@ -2103,6 +2223,7 @@ export default function ChatNoir() {
       if (!isAbort) {
         showToast("通信エラーが発生しました。ネットワーク設定を確認してください。");
         console.warn("フェーズ2開始通信エラー:", getErrorMessage(err));
+        setOpeningFlowStage('INTRODUCTION');
         setMessages(messages);
       }
     } finally {
@@ -2133,6 +2254,9 @@ export default function ChatNoir() {
 【重要ルール】
 - mapOperation.mode は必ず "merge" または "replace" を返すこと。
 - "merge" は一部のレイヤーだけを更新・訂正するときに使う。返したレイヤーはそのレイヤー全体を正しい完成形として扱うので、修正したいレイヤーは差分ではなく完成形を返すこと。
+- 新しい場所を追加しただけ、周辺情報が増えただけ、現在地が進んだだけ、未知の部屋や通路が判明しただけなら、必ず "merge" を使うこと。
+- "replace" は既存地図そのものに明確な誤りがあるときだけ使うこと。例: 接続が間違っていた、同じ場所の重複ノードがある、仮IDや誤IDが混ざっている、レイヤー分割が明らかに破綻している、構造が既存地図と矛盾している。
+- "replace" を使うときは mapOperation.reason に「既存地図の何が間違っているのか」を必ず具体的に書くこと。理由が書けない場合は "merge" を使うこと。
 - "replace" は地図全体の前提が崩れていて、全面的に再構築した方が安全なときだけ使うこと。その場合は必要な全レイヤーを返すこと。
 - 既存ノードIDは基本的には維持すること。ただし、明らかな誤り・重複・仮ID・誤接続に由来するノードや edge は、修正・統合・削除してよい。
 - ノードIDは英数字とアンダースコア中心の安全な識別子にし、表示名は label へ入れてください。
@@ -2309,6 +2433,8 @@ ${currentMapJson}
       const res = await requestAvatarPromptApi({
         apiKey: apiKey,
         characterName: characterName,
+        model: selectedModel,
+        fallbackEnabled,
         systemInstruction: gmRuleText + "\n\n" + scenarioText,
         messages: messages
       });
@@ -2368,7 +2494,6 @@ ${currentMapJson}
     return {
       visibleMsgCount: visibleMessages.length,
       gmMsgCount: gmMessages.length,
-      openMysteries: mysteriesData.filter((mystery): mystery is string => typeof mystery === 'string' && mystery.trim().length > 0),
     };
   };
 
@@ -2376,11 +2501,7 @@ ${currentMapJson}
     const sourceMessages = latestMessagesRef.current;
     const visibleMessages = getVisibleStoryMessages(sourceMessages);
     const gmMessages = sourceMessages.filter((msg) => msg.isGm && msg.parts?.[0]?.text);
-    const openMysteries = mysteriesData.filter((mystery): mystery is string => typeof mystery === 'string' && mystery.trim().length > 0);
     const protagonistName = scenarioMeta.protagonistName?.trim();
-    const openMysteriesText = openMysteries.length > 0
-      ? openMysteries.map((mystery) => `- ${mystery}`).join('\n')
-      : '- まだ整理されていない';
     const recentTranscript = visibleMessages.length > 0
       ? visibleMessages.map((msg) => `${msg.role === 'user' ? '主人公' : '本編'}: ${msg.parts[0].text}`).join('\n\n')
       : 'まだ本編ログはありません。';
@@ -2392,14 +2513,13 @@ ${currentMapJson}
       '【プレイヤーが既に知っている情報】',
       scenarioTitle ? `シナリオ名: ${scenarioTitle}` : '',
       protagonistName ? `主人公 = プレイヤー = ${protagonistName}` : '主人公 = プレイヤー',
-      `未解決の謎:\n${openMysteriesText}`,
       `直近の公開ログ:\n${recentTranscript}`,
       gmTranscript ? `GMとのやりとり:\n${gmTranscript}` : '',
       'この範囲を超える情報は知らない前提で、ネタバレなしに助言してください。'
     ].filter(Boolean).join('\n\n');
   };
 
-  const buildSupportStoryProgressMessage = (currentSnapshot: SupportStorySnapshot): AppMessage | null => {
+  const buildSupportStoryProgressMessage = (): AppMessage | null => {
     const previousSnapshot = supportStorySnapshots[supportStorySnapshots.length - 1];
 
     if (!previousSnapshot) {
@@ -2413,8 +2533,6 @@ ${currentMapJson}
       .map((msg) => `${msg.role === 'user' ? '主人公' : '本編'}: ${msg.parts[0].text}`);
     const newGmLines = gmMessages.slice(previousSnapshot.gmMsgCount)
       .map((msg) => `${msg.role === 'user' ? '主人公からGMへの質問' : 'GMの回答'}: ${msg.parts[0].text.replace(/^※GMへ：\n/, '')}`);
-    const addedMysteries = currentSnapshot.openMysteries.filter((mystery) => !previousSnapshot.openMysteries.includes(mystery));
-    const removedMysteries = previousSnapshot.openMysteries.filter((mystery) => !currentSnapshot.openMysteries.includes(mystery));
 
     return {
       role: 'user',
@@ -2428,12 +2546,6 @@ ${currentMapJson}
           newGmLines.length > 0
             ? `新しく増えたGMとのやりとり:\n${newGmLines.join('\n\n')}`
             : '新しく増えたGMとのやりとり: なし',
-          addedMysteries.length > 0
-            ? `新しく未解決になった謎:\n${addedMysteries.map((mystery) => `- ${mystery}`).join('\n')}`
-            : '新しく未解決になった謎: なし',
-          removedMysteries.length > 0
-            ? `前回から解消・整理された謎:\n${removedMysteries.map((mystery) => `- ${mystery}`).join('\n')}`
-            : '前回から解消・整理された謎: なし',
           '差分が少ない場合は、進展がほぼない前提で助言してください。'
         ].join('\n\n')
       }]
@@ -2489,6 +2601,10 @@ ${currentMapJson}
   };
 
   const openSupportModal = () => {
+    if (!canUseSupportAssistant) {
+      showToast('おたすけロアちゃんは「物語に入る」を押したあとに使えます');
+      return;
+    }
     setIsSupportSidebarOpen(false);
     setIsSupportModalOpen(true);
   };
@@ -2502,6 +2618,11 @@ ${currentMapJson}
     const textToSend = overrideText !== undefined ? overrideText : (supportInputRef.current?.getCurrentText() ?? '');
     const suppressPersonaNotice = options.suppressPersonaNotice === true;
     if (!textToSend.trim() || isSupportLoading) return null;
+
+    if (!canUseSupportAssistant) {
+      showToast('おたすけロアちゃんは「物語に入る」を押したあとに使えます');
+      return null;
+    }
 
     if (!isSupportPersonaReady) {
       if (!suppressPersonaNotice) {
@@ -2526,7 +2647,7 @@ ${currentMapJson}
     const nextSupportStorySnapshots = [...previousSupportStorySnapshots, currentSupportStorySnapshot];
     const supportContextMessage: AppMessage = { role: 'user', parts: [{ text: buildSupportContext() }] };
     const supportHistoryMessages = buildSupportHistoryMessages();
-    const supportStoryProgressMessage = buildSupportStoryProgressMessage(currentSupportStorySnapshot);
+    const supportStoryProgressMessage = buildSupportStoryProgressMessage();
     const latestSupportRequestMessage: AppMessage = { role: 'user', parts: [{ text: `【今回の最新相談】\n${textToSend}` }] };
     const supportInstruction = [
       supportPersonaPrompt,
@@ -2591,7 +2712,7 @@ ${currentMapJson}
         };
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
-        showAppAlert('サポートAIの応答に失敗しました: ' + errorStr);
+        showAppAlert(errorStr || 'ロアの返答に失敗しました。もう一度相談してください。', 'おたすけロアちゃん');
         setSupportMessagesState(previousSupportMessages);
         setSupportStorySnapshotsState(previousSupportStorySnapshots);
         if (overrideText === undefined) {
@@ -2602,7 +2723,7 @@ ${currentMapJson}
     } catch (err: unknown) {
       if (!isAbortError(err)) {
         console.error(err);
-        showAppAlert('サポートAIとの通信に失敗しました。');
+        showAppAlert('ロアとの通信に失敗しました。通信状況を確認して、もう一度相談してください。', 'おたすけロアちゃん');
       }
       setSupportMessagesState(previousSupportMessages);
       setSupportStorySnapshotsState(previousSupportStorySnapshots);
@@ -2718,6 +2839,17 @@ ${currentMapJson}
     }
   };
 
+  useEffect(() => {
+    if (canUseSupportAssistant) return;
+    setIsSupportSidebarOpen(false);
+    setIsSupportModalOpen(false);
+  }, [canUseSupportAssistant]);
+
+  useEffect(() => {
+    if (canUseNotebookSidebar) return;
+    setIsSidebarOpen(false);
+  }, [canUseNotebookSidebar]);
+
   const handleLoadData = () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -2742,15 +2874,16 @@ ${currentMapJson}
     const data = await loadFromIDB<StoredGameState>(key);
     if (data) {
       sessionStorage.setItem('chatnoir-current-save-key', key);
-      restoreStateData(data);
+      restoreStateData(data, undefined, key);
       showToast('オートセーブデータから復帰しました');
     }
   };
 
-  const handleDeleteSave = async (key: string, e: React.MouseEvent) => {
+  const handleDeleteSave = async (key: string, displayName: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (await showAppConfirm(`「${key.replace('auto_save_', '')}」のセーブデータを削除しますか？`, { title: 'セーブデータを削除', confirmLabel: '削除する', danger: true })) {
+    if (await showAppConfirm(`「${displayName}」のセーブデータを削除しますか？`, { title: 'セーブデータを削除', confirmLabel: '削除する', danger: true })) {
       await deleteFromIDB(key);
+      deleteMapSnapshot(key);
       setAutoSaves(metas => metas.filter(m => m.key !== key));
       showToast('セーブデータを削除しました');
       if (sessionStorage.getItem('chatnoir-current-save-key') === key) {
@@ -2776,14 +2909,27 @@ ${currentMapJson}
     void runScenarioDebugStep();
   };
 
-  const sendMessage = async (overrideText?: string, isGm: boolean = false, options?: { automatedByDebug?: boolean }) => {
+  const openEndingOverlay = () => {
+    setIsSidebarOpen(false);
+    setIsSupportSidebarOpen(false);
+    setIsSupportModalOpen(false);
+    setEndingPhase('FADE_OUT');
+    setTimeout(() => setEndingPhase('MENU'), 3000);
+  };
+
+  const sendMessage = async (
+    overrideText?: string,
+    isGm: boolean = false,
+    options?: { automatedByDebug?: boolean; hiddenUserMessage?: boolean }
+  ) => {
     const automatedByDebug = options?.automatedByDebug === true;
+    const hiddenUserMessage = options?.hiddenUserMessage === true;
     const textToSend = overrideText !== undefined ? overrideText : (chatInputRef.current?.getCurrentText() ?? '');
     if (!textToSend.trim() || isLoading) return;
 
     const previousMessages = latestMessagesRef.current;
     const actualText = isGm ? `※GMへ：\n${textToSend}` : textToSend;
-    const newUserMsg: AppMessage = { role: 'user', parts: [{ text: actualText }], isGm };
+    const newUserMsg: AppMessage = { role: 'user', parts: [{ text: actualText }], isGm, isHidden: hiddenUserMessage };
     const newHistory: AppMessage[] = [...previousMessages, newUserMsg];
     latestMessagesRef.current = newHistory;
     setMessages(newHistory);
@@ -2791,8 +2937,11 @@ ${currentMapJson}
     
     setIsLoading(true);
     debugAutomatedMessageRef.current = automatedByDebug;
-    // 自分が送信した直後だけは一番下（最新の自分の入力）までスクロールさせる
-    setTimeout(() => scrollToBottom(), 100);
+    // 手動送信時だけ一番下（最新の自分の入力）までスクロールさせる。
+    // シナリオデバッグモードの自動送信では、読んでいる位置を維持する。
+    if (!automatedByDebug) {
+      setTimeout(() => scrollToBottom(), 100);
+    }
 
     abortControllerRef.current = new AbortController();
 
@@ -2889,6 +3038,31 @@ ${currentMapJson}
         debugAutomatedMessageRef.current = false;
       }
     }
+  };
+
+  const forceCloseCurtain = async () => {
+    if (gameState !== 'PLAYING' || isLoading || endingPhase === 'FADE_OUT' || endingPhase === 'MENU' || endingPhase === 'REVIEW') {
+      return;
+    }
+
+    setShowSettings(false);
+
+    if (endingPhase === 'READY_TO_END' || hasEndingMarker) {
+      openEndingOverlay();
+      return;
+    }
+
+    const confirmed = await showAppConfirm(
+      '現在の進行から物語を締めくくり、強制的にエピローグへ進みますか？',
+      { title: '幕を閉じる' }
+    );
+    if (!confirmed) return;
+
+    await sendMessage(
+      '（システムコマンド：ここで本編を締めくくり、これまでの展開を踏まえたエピローグを直ちに開始してください。GMルールのエンディング手順に従い、水平線、# エピローグ、その後の結末、そして最後に改行して【終】を必ず出力してください。以後は通常進行を続けず、今回のセッションを完了させてください。）',
+      false,
+      { hiddenUserMessage: true }
+    );
   };
 
   const sendReviewMessage = async (initialPrompt?: string) => {
@@ -3016,7 +3190,7 @@ ${currentMapJson}
     return messages.map((msg, index) => {
       // システム起動メッセージ(0)とメインゲーム開始指示(2)は非表示
       if (index === 0 || index === 2) return null;
-      if (msg.isGm) return null;
+      if (msg.isGm || msg.isHidden) return null;
 
       return (
         <div
@@ -3314,7 +3488,7 @@ ${currentMapJson}
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
                     <button onClick={() => handleAutoSaveLoad(meta.key)} style={{ flex: 1, background: '#e0e0e0', color: '#000', border: 'none', padding: '6px 0', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer', marginRight: '8px' }}>プレイ再開</button>
-                    <button onClick={(e) => handleDeleteSave(meta.key, e)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid rgba(255,68,68,0.4)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer' }}>削除</button>
+                    <button onClick={(e) => handleDeleteSave(meta.key, meta.saveName || meta.key.replace('auto_save_', '').replace(/_[a-z0-9]+$/, ''), e)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid rgba(255,68,68,0.4)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer' }}>削除</button>
                   </div>
                 </div>
               </div>
@@ -3478,7 +3652,7 @@ ${currentMapJson}
                 APIキーの保存について
               </p>
               <p style={{ fontSize: '0.72rem', color: '#444', lineHeight: 1.7, margin: 0 }}>
-                入力したAPIキーは GitHub やこのサイトのセーブデータには保存されません。AI応答を作るときだけ、あなたのブラウザから Google API へ直接送信されます。共用PCでは「一時保存」をおすすめします。利用後にブラウザを閉じるとキーが消えます。
+                入力したAPIキーは GitHub やこのサイトのセーブデータには保存されません。
               </p>
             </div>
 
@@ -3514,7 +3688,7 @@ ${currentMapJson}
             >
               <option value="gemma-4-31b-it">Gemma 4 31B（推奨）</option>
               <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
-              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite（軽量高速）</option>
+              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite（軽量・安定）</option>
             </select>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
@@ -3708,7 +3882,7 @@ ${currentMapJson}
               onClick={handleStartLogin}
               style={{ opacity: (!apiKey || !scenarioText || !prologueText || !briefingText) ? 0.5 : 1 }}
             >
-              物語の準備へ
+              プロローグへ
             </button>
           </div>
         </div>
@@ -3821,7 +3995,7 @@ ${currentMapJson}
             </div>
           </div>
         )}
-        {endingPhase !== 'REVIEW' && isSupportSidebarOpen && renderSupportPanel('sidebar')}
+        {endingPhase !== 'REVIEW' && canUseSupportAssistant && isSupportSidebarOpen && renderSupportPanel('sidebar')}
       </aside>
 
       <main className={styles.mainChat}>
@@ -3835,7 +4009,7 @@ ${currentMapJson}
           }}
         >
 
-          {/* ブリーフィング（導入）画面 */}
+          {/* 旧ブリーフィング画面（旧セーブデータ復元用） */}
           {gameState === 'BRIEFING' && (
             <div className="fade-in" style={{ maxWidth: '800px', margin: '0 auto', paddingTop: '2rem', position: 'relative', zIndex: 11 }}>
               <h2 style={{ fontFamily: 'var(--app-font)', color: 'var(--text-main)', marginBottom: '2rem', textAlign: 'center', letterSpacing: '4px', borderBottom: 'none' }}>
@@ -3851,10 +4025,14 @@ ${currentMapJson}
               <div style={{ textAlign: 'center', marginTop: '4rem' }}>
                 <button
                   className={styles.btn}
-                  onClick={startInitialChat}
+                  onClick={() => {
+                    setGameState('PLAYING');
+                    setMessages(buildInitialPrologueHistory());
+                    setOpeningFlowStage('INTRODUCTION');
+                  }}
                   style={{ padding: '1.2rem 4rem', fontSize: '1.2rem', background: '#111', color: '#fff', border: 'none' }}
                 >
-                  プロローグを読む
+                  物語に入る
                 </button>
               </div>
             </div>
@@ -3876,13 +4054,7 @@ ${currentMapJson}
             }}>
               <button
                 className={styles.btn}
-                onClick={() => {
-                  setIsSidebarOpen(false);
-                  setIsSupportSidebarOpen(false);
-                  setIsSupportModalOpen(false);
-                  setEndingPhase('FADE_OUT');
-                  setTimeout(() => setEndingPhase('MENU'), 3000);
-                }}
+                onClick={openEndingOverlay}
                 style={{
                   padding: isVertical ? '3rem 1.5rem' : '1.5rem 5rem',
                   fontSize: '1.2rem',
@@ -3901,8 +4073,8 @@ ${currentMapJson}
             </div>
           )}
 
-          {/* プロローグ表示後の「物語に入る」ボタン（フェーズ2がまだ開始されていない時のみ） */}
-          {gameState === 'PLAYING' && messages.length <= 2 && !isLoading && (
+          {/* プロローグ表示後の確認ボタン */}
+          {gameState === 'PLAYING' && openingFlowStage === 'PROLOGUE' && messages.length <= 2 && !isLoading && (
             <div className="fade-in" style={{
               textAlign: isVertical ? 'left' : 'center',
               marginTop: isVertical ? '0' : '3rem',
@@ -3913,15 +4085,26 @@ ${currentMapJson}
               alignItems: isVertical ? 'center' : 'center',
               gap: '1.5rem',
             }}>
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', letterSpacing: '2px', fontFamily: 'var(--app-font)', margin: 0, lineHeight: 2 }}>
-                ここから、あなたの行動が物語を動かします。{isVertical ? '' : <br />}用意ができたら「物語に入る」を押してください。
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', letterSpacing: '2px', fontFamily: 'var(--app-font)', margin: 0, lineHeight: 2, textOrientation: isVertical ? 'upright' : 'mixed' }}>
+                プロローグを読み終えたらOKを押してください。
               </p>
               <button
                 className={styles.btn}
-                onClick={startPhase2}
-                style={{ padding: isVertical ? '2rem 1rem' : '1rem 4rem', fontSize: '1rem', background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', letterSpacing: '4px', whiteSpace: 'nowrap' }}
+                onClick={openIntroduction}
+                style={{
+                  padding: isVertical ? '1.2rem 0.9rem' : '1rem 4rem',
+                  minHeight: isVertical ? '120px' : undefined,
+                  fontSize: '1rem',
+                  background: 'var(--text-main)',
+                  color: 'var(--bg-color)',
+                  border: 'none',
+                  letterSpacing: isVertical ? '2px' : '4px',
+                  whiteSpace: 'nowrap',
+                  writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
+                  textOrientation: isVertical ? 'upright' : 'mixed'
+                }}
               >
-                物語に入る
+                OK
               </button>
             </div>
           )}
@@ -3934,7 +4117,7 @@ ${currentMapJson}
         </div>
 
         {/* フローティング「手帳を開く」ボタン */}
-        {!isSidebarOpen && gameState === 'PLAYING' && (
+        {!isSidebarOpen && canUseNotebookSidebar && (
           <button
             onClick={() => setIsSidebarOpen(true)}
             style={{ position: 'fixed', top: '20px', right: '0', background: '#333', color: '#fff', padding: '14px 8px 16px 10px', borderRadius: '24px 0 0 24px', border: 'none', cursor: 'pointer', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', writingMode: 'vertical-rl', textOrientation: 'mixed', boxShadow: '-2px 2px 10px rgba(0,0,0,0.2)', fontSize: '0.8rem', letterSpacing: '1px', minHeight: '150px' }}
@@ -3944,7 +4127,7 @@ ${currentMapJson}
         )}
 
         {/* フローティング「おたすけを開く」ボタン */}
-        {!isSupportSidebarOpen && !isSupportModalOpen && endingPhase !== 'REVIEW' && gameState === 'PLAYING' && (
+        {!isSupportSidebarOpen && !isSupportModalOpen && endingPhase !== 'REVIEW' && canUseSupportAssistant && (
           <button
             onClick={() => setIsSupportSidebarOpen(true)}
             style={{ position: 'fixed', top: '20px', left: '0', background: '#333', color: '#fff', padding: '14px 10px 16px 8px', borderRadius: '0 24px 24px 0', border: 'none', cursor: 'pointer', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', writingMode: 'vertical-rl', textOrientation: 'mixed', boxShadow: '2px 2px 10px rgba(0,0,0,0.2)', fontSize: '0.8rem', letterSpacing: '1px', minHeight: '150px' }}
@@ -3980,11 +4163,13 @@ ${currentMapJson}
                 
                 <button onClick={() => {
                   setEndingPhase('REVIEW');
-                  sendReviewMessage("シナリオクリアお疲れ様でした！それでは、感想戦をよろしくお願いします！");
+                  if (!hasReviewConversation) {
+                    sendReviewMessage("シナリオクリアお疲れ様でした！それでは、感想戦をよろしくお願いします！");
+                  }
                 }} style={{ background: 'var(--accent-glow)', border: '1px solid var(--accent-red)', padding: '1.5rem 3rem', color: '#fff', fontSize: '1.1rem', letterSpacing: '2px', borderRadius: '8px', width: '100%', cursor: 'pointer', backdropFilter: 'blur(10px)', transition: '0.3s' }}
                 onMouseOver={(e) => e.currentTarget.style.background = 'var(--accent-red)'}
                 onMouseOut={(e) => e.currentTarget.style.background = 'var(--accent-glow)'}>
-                  感想戦をはじめる（ネタバレあり解説）
+                  {hasReviewConversation ? '感想戦に戻る' : '感想戦をはじめる（ネタバレあり解説）'}
                 </button>
 
                 <button onClick={() => {
@@ -4005,7 +4190,7 @@ ${currentMapJson}
                 <button onClick={handleSaveData} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', padding: '1rem 3rem', color: '#aaa', fontSize: '1rem', letterSpacing: '2px', borderRadius: '8px', width: '100%', cursor: 'pointer', transition: '0.3s' }}
                 onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff'; }}
                 onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#aaa'; }}>
-                  システム状態をまるごとセーブデータとして保存
+                  セーブデータ（JSONファイル）を出力する
                 </button>
 
                 <button onClick={() => { resetAllState(); setGameState('WELCOME'); }} style={{ background: 'transparent', border: 'none', padding: '1rem', color: '#666', fontSize: '0.9rem', letterSpacing: '2px', marginTop: '1rem', cursor: 'pointer', textDecoration: 'underline' }}
@@ -4104,6 +4289,9 @@ ${currentMapJson}
                         </div>
                       </div>
                     </div>
+                    {endingPhase === 'NONE' && !hasEndingMarker && (
+                      <button onClick={() => { void forceCloseCurtain(); }} disabled={isLoading} style={{ background: 'rgba(120, 22, 22, 0.14)', color: 'var(--accent-red)', border: '1px solid var(--accent-red)', padding: '8px', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center', opacity: isLoading ? 0.5 : 1 }}>幕を閉じる</button>
+                    )}
                     <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>シナリオ選択画面へ</button>
                     <button onClick={async () => {
                       if (await showAppConfirm("トップ画面へ戻りますか？（現在の進行状況は自動セーブされています）", { title: 'トップ画面へ戻る' })) {
@@ -4187,7 +4375,33 @@ ${currentMapJson}
               </div>
             )}
 
-            {isSupportModalOpen && (
+            {gameState === 'PLAYING' && openingFlowStage === 'INTRODUCTION' && (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px' }}>
+                <div className="fade-in" style={{ background: 'var(--sidebar-bg)', padding: '2rem', borderRadius: '8px', border: '1px solid var(--border-color)', width: '90%', maxWidth: '680px', display: 'flex', flexDirection: 'column', gap: '1rem', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', backdropFilter: 'blur(10px)', maxHeight: '90vh' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '2px' }}>INTRODUCTION</h3>
+                  </div>
+                  <div className="markdown-body" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '1.5rem', color: 'var(--text-main)', minHeight: '220px' }}>
+                    {briefingText ? (
+                      <ReactMarkdown>{formatNovelText(briefingText, false)}</ReactMarkdown>
+                    ) : (
+                      <p>No briefing file loaded.</p>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <button
+                      className={styles.btn}
+                      onClick={startPhase2}
+                      style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      物語に入る
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {canUseSupportAssistant && isSupportModalOpen && (
               <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px' }}>
                 {renderSupportPanel('modal')}
               </div>
@@ -4355,13 +4569,13 @@ ${currentMapJson}
         className={styles.sidebar} 
         style={{ 
           position: 'relative', 
-          width: (isSidebarOpen && gameState === 'PLAYING') ? `${sidebarWidth}px` : '0px', 
+          width: (isSidebarOpen && canUseNotebookSidebar) ? `${sidebarWidth}px` : '0px', 
           padding: 0, 
           overflowY: 'hidden', 
           overflowX: 'hidden', 
-          borderLeft: isSidebarOpen ? '1px solid var(--border-color)' : 'none', 
+          borderLeft: (isSidebarOpen && canUseNotebookSidebar) ? '1px solid var(--border-color)' : 'none', 
           transition: dragRef.current ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
-          opacity: (isSidebarOpen && gameState === 'PLAYING') ? (isAnySidebarUpdating ? 0.6 : 1) : 0, 
+          opacity: (isSidebarOpen && canUseNotebookSidebar) ? (isAnySidebarUpdating ? 0.6 : 1) : 0, 
           pointerEvents: isAnySidebarUpdating ? 'none' : 'auto',
           display: 'flex', 
           flexDirection: 'column' 

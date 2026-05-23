@@ -55,11 +55,14 @@ export interface GeminiChatResponse {
   hasSpeakerWarning?: boolean;
   action?: string;
   suggestions?: string[];
+  error?: string;
 }
 
 export interface GeminiAvatarPromptRequest {
   apiKey: string;
   characterName: string;
+  model?: string | null;
+  fallbackEnabled?: boolean;
   systemInstruction?: string;
   messages?: GeminiChatMessage[];
   abortSignal?: AbortSignal;
@@ -67,11 +70,12 @@ export interface GeminiAvatarPromptRequest {
 
 export interface GeminiAvatarPromptResponse {
   prompt: string;
+  error?: string;
 }
 
 export interface ApiLikeResponse<T> {
   ok: boolean;
-  json: () => Promise<any>;
+  json: () => Promise<T>;
 }
 
 const FALLBACK_CHAIN = [
@@ -91,6 +95,23 @@ const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
   if (isRecord(error) && typeof error.message === 'string') return error.message;
   return 'Internal Server Error';
+};
+
+const getPublicErrorMessage = (error: unknown): string => {
+  const message = getErrorMessage(error);
+  const normalizedMessage = message.toLowerCase();
+
+  if (
+    normalizedMessage.includes('failed to fetch')
+    || normalizedMessage.includes('fetch failed')
+    || normalizedMessage.includes('load failed')
+    || normalizedMessage.includes('bad gateway')
+    || normalizedMessage.includes('cors')
+  ) {
+    return 'Google API への接続に失敗しました。GitHub Pages 版はブラウザから Google API を直接呼び出すため、モデルや Google 側の状態によって CORS または 502 で失敗することがあります。Gemini 3.1 Flash-Lite を選び、フォールバックを有効にして再試行してください。';
+  }
+
+  return message;
 };
 
 const summarizeForLog = (text: string, maxLength = 140): string => {
@@ -234,14 +255,19 @@ const normalizeModelName = (model: string | null | undefined): string => {
 
 const isRetriableError = (error: unknown) => {
   const message = getErrorMessage(error);
+  const normalizedMessage = message.toLowerCase();
   return message.includes('500')
     || message.includes('INTERNAL')
     || message.includes('503')
+    || message.includes('502')
     || message.includes('429')
     || message.includes('UNAVAILABLE')
     || message.includes('TIMEOUT')
-    || message.includes('timeout')
-    || message.includes('fetch failed');
+    || normalizedMessage.includes('timeout')
+    || normalizedMessage.includes('fetch failed')
+    || normalizedMessage.includes('failed to fetch')
+    || normalizedMessage.includes('load failed')
+    || normalizedMessage.includes('bad gateway');
 };
 
 const normalizeMessages = (rawMessages: unknown): GeminiChatMessage[] => {
@@ -393,6 +419,12 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
   if (request.assistantMode === 'support') {
     const startedAt = Date.now();
     const supportRequestSummary = summarizeForLog(lastUserMessage.replace(/^【今回の最新相談】\s*/u, ''));
+    const maxAttempts = 2;
+    let attempt = 0;
+    let retryInstruction = request.systemInstruction || 'あなたはプレイヤー支援AIです。';
+    let supportPayload: SupportPayload = {};
+    let hasParsedSupportPayload = false;
+    let usedModel = '';
     console.log(`\n💬 [おたすけロアちゃん開始] モデル候補: ${modelsToTry.join(' -> ')}`);
     if (supportRequestSummary) {
       console.log(`📝 [相談内容] ${supportRequestSummary}`);
@@ -407,11 +439,11 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
         },
         action: {
           type: 'string',
-          description: '実際に送る入力文。デバッグ用途などで必要なときに1件だけ返す。不要な場合は空文字でもよい。小説本文としてそのまま差し込める1〜2文の完成文にすること。小説の続きを書くようなスタイルで書き、「〜する」だけの概要文は不可。助言口調や解説口調は禁止。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。'
+          description: '実際に送る入力文。デバッグ用途などで必要なときに1件だけ返す。不要な場合は空文字でもよい。小説本文としてそのまま差し込める1〜2文の完成文にすること。小説の続きを書くようなスタイルで書く。助言口調や解説口調は禁止。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。'
         },
         suggestions: {
           type: 'array',
-          description: '本編入力欄にそのまま入れて使える入力文を0件から3件。各候補は小説本文としてそのまま差し込める1〜2文の完成文にすること。小説の続きを書くようなスタイルで書き、「〜する」だけの概要文は不可。助言口調や解説口調は禁止。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。',
+          description: '本編入力欄にそのまま入れて使える入力文を0件から3件。各候補は小説本文としてそのまま差し込める1〜2文の完成文にすること。小説の続きを書くようなスタイルで書く。助言口調や解説口調は禁止。セリフ（主人公の発言）のみ「」で囲む。行動・探索など非セリフは「」を絶対に付けない。必ず「現在の主人公の場所から直接できる行動」のみを提案すること。現在地に行くための移動が必要な行動（例：外にいるのに自室での行動）は絶対に含めないこと。',
           items: {
             type: 'string'
           }
@@ -420,34 +452,50 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
       required: ['reply', 'action']
     };
 
-    const { result: response, usedModel } = await generateWithFallback((model) => withAbort(ai.models.generateContent({
-      model,
-      contents: messages,
-      config: {
-        systemInstruction: request.systemInstruction || 'あなたはプレイヤー支援AIです。',
-        temperature: 0.6,
-        responseMimeType: 'application/json',
-        responseSchema: supportSchema,
-      }
-    }), request.abortSignal));
+    while (attempt < maxAttempts) {
+      attempt++;
+      console.log(`\n⏳ [おたすけロアちゃん生成開始] Attempt: ${attempt}`);
 
-    let supportPayload: SupportPayload = {};
-    try {
-      let rawText = (response.text || '').trim();
-      const fenceMatch = rawText.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/);
-      if (fenceMatch) {
-        rawText = fenceMatch[1].trim();
-      } else {
-        rawText = rawText.replace(/\n?```\s*$/, '').trim();
+      const { result: response, usedModel: currentUsedModel } = await generateWithFallback((model) => withAbort(ai.models.generateContent({
+        model,
+        contents: messages,
+        config: {
+          systemInstruction: retryInstruction,
+          temperature: 0.6,
+          responseMimeType: 'application/json',
+          responseSchema: supportSchema,
+        }
+      }), request.abortSignal));
+
+      usedModel = currentUsedModel;
+
+      try {
+        let rawText = (response.text || '').trim();
+        const fenceMatch = rawText.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/);
+        if (fenceMatch) {
+          rawText = fenceMatch[1].trim();
+        } else {
+          rawText = rawText.replace(/\n?```\s*$/, '').trim();
+        }
+        if (!rawText.startsWith('{')) {
+          const jsonStart = rawText.indexOf('{');
+          const jsonEnd = rawText.lastIndexOf('}');
+          if (jsonStart !== -1 && jsonEnd !== -1) rawText = rawText.slice(jsonStart, jsonEnd + 1);
+        }
+        supportPayload = normalizeSupportPayload(JSON.parse(rawText) as unknown);
+        hasParsedSupportPayload = true;
+        break;
+      } catch (error) {
+        console.error(`Support JSON parse error (attempt ${attempt}/${maxAttempts}):`, response.text, error);
+        if (attempt >= maxAttempts) break;
+
+        console.warn('⚠️ おたすけロアちゃん応答のJSONパースに失敗したため再試行します。');
+        retryInstruction = `${request.systemInstruction || 'あなたはプレイヤー支援AIです。'}\n\n【重要】前回の出力はJSONとして解析できませんでした。reply・action・suggestions だけを持つ、単一の正しいJSONオブジェクトを返してください。コードブロックや前置き・後置きの説明文は不要です。`;
       }
-      if (!rawText.startsWith('{')) {
-        const jsonStart = rawText.indexOf('{');
-        const jsonEnd = rawText.lastIndexOf('}');
-        if (jsonStart !== -1 && jsonEnd !== -1) rawText = rawText.slice(jsonStart, jsonEnd + 1);
-      }
-      supportPayload = normalizeSupportPayload(JSON.parse(rawText) as unknown);
-    } catch (error) {
-      console.error('Support JSON parse error:', response.text, error);
+    }
+
+    if (!hasParsedSupportPayload) {
+      throw new Error('ロアの返答をうまく読み取れませんでした。少し時間をおいて、もう一度相談してください。');
     }
 
     console.log(`✅ [おたすけロアちゃん完了] 処理時間: ${Math.round((Date.now() - startedAt) / 1000)}秒 / 使用モデル: ${usedModel}`);
@@ -670,6 +718,8 @@ const generateAvatarPrompt = async (request: GeminiAvatarPromptRequest): Promise
   }
 
   const ai = new GoogleGenAI({ apiKey: request.apiKey });
+  const requestedModel = normalizeModelName(request.model);
+  const { generateWithFallback } = createChatGenerator(ai, requestedModel, request.fallbackEnabled === true, request.abortSignal);
   const contextText = Array.isArray(request.messages)
     ? request.messages.map((message) => `${message.role === 'user' ? 'Player' : 'GM'}: ${message.parts?.[0]?.text || ''}`).join('\n')
     : '';
@@ -695,11 +745,11 @@ ${request.systemInstruction}
 ${contextText || 'なし'}
 `;
 
-  const response = await withAbort(ai.models.generateContent({
-    model: 'gemma-4-31b-it',
+  const { result: response } = await generateWithFallback((model) => withAbort(ai.models.generateContent({
+    model,
     contents: [{ role: 'user', parts: [{ text: extractionPrompt }] }],
     config: { temperature: 0.5 }
-  }), request.abortSignal);
+  }), request.abortSignal));
 
   return {
     prompt: response.text?.trim() || '人物のバストアップ、正面向き。アニメ調イラスト、シンプルな明るいグレーの背景、高精細。'
@@ -715,10 +765,10 @@ const toApiLikeResponse = async <T>(action: () => Promise<T>): Promise<ApiLikeRe
     };
   } catch (error: unknown) {
     if (isAbortError(error)) throw error;
-    const errorMessage = getErrorMessage(error);
+    const errorMessage = getPublicErrorMessage(error);
     return {
       ok: false,
-      json: async () => ({ error: errorMessage }),
+      json: async () => ({ error: errorMessage } as T),
     };
   }
 };
