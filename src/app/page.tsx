@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 import React, { useState, useEffect, useRef, useMemo, useImperativeHandle, useEffectEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import '@xyflow/react/dist/style.css';
 import MapFlowCanvas, { MAP_NODE_LEGEND_ITEMS } from '@/components/MapFlowCanvas';
@@ -18,6 +19,7 @@ import {
   type GraphMapState,
   type MapCurrentPos,
 } from '@/lib/mapGraph';
+import { consumePendingGeneratedScenario } from '@/lib/scenarioGeneration';
 import styles from './page.module.css';
 
 type AppAlertState = {
@@ -64,6 +66,7 @@ const BUILD_TIME_BASE_PATH = process.env.GITHUB_ACTIONS === 'true' && REPOSITORY
 const SUPPORT_SUGGESTION_PROMPT = '今の状況で次に入力すると良さそうな文を3つ提案して。';
 const SCENARIO_DEBUG_PROMPT = [
   'あなたはプレイヤーの代わりに、次に送る入力を1つだけ決めてください。',
+  'シナリオは、明確なエピローグ＆【終】が本文として提示されるまでは終わっていません。物語がきれいに終わっているように思えても、完了扱いにせず、エピローグに到達するための入力を選んでください。',
   'まず「なぜその入力にするか」を簡潔に説明し、そのあとに実際に送る入力文を1つだけ示してください。'
 ].join('\n');
 const SUPPORT_HISTORY_MAX_MESSAGES = 18;
@@ -1035,6 +1038,7 @@ const cloneDefaultMapLayers = (): Record<string, GraphMapLayer> => structuredClo
 const cloneDefaultCurrentPos = (): MapCurrentPos => ({ ...DEFAULT_MAP_STATE.currentPos! });
 
 export default function ChatNoir() {
+  const router = useRouter();
   const [apiKey, setApiKey] = useState('');
   const [apiKeyStorageMode, setApiKeyStorageMode] = useState<ApiKeyStorageMode>(() => readStoredApiKey().mode);
   // ゲームの進行ステータス
@@ -1556,6 +1560,38 @@ export default function ChatNoir() {
     setTimeout(() => setToastMsg(''), 3000);
   };
 
+  const handlePendingGeneratedScenario = useEffectEvent(() => {
+    const pendingScenario = consumePendingGeneratedScenario();
+    if (!pendingScenario) return;
+
+    resetAllState();
+    setScenarioTitle(pendingScenario.scenarioTitle || pendingScenario.scenarioMeta.title || 'Generated Scenario');
+    setScenarioText(pendingScenario.scenarioText);
+    setBriefingText(pendingScenario.briefingText);
+    setPrologueText(pendingScenario.prologueText);
+    setMapFileText(pendingScenario.mapFileText || '');
+    setCoverImage(pendingScenario.coverImage || '');
+    setScenarioMeta(pendingScenario.scenarioMeta || {});
+    setSaveName(pendingScenario.saveName || pendingScenario.scenarioTitle || 'Generated Scenario');
+
+    const newId = Date.now().toString(36);
+    setSessionRunId(newId);
+
+    saveScenarioMaster(pendingScenario.scenarioTitle || pendingScenario.scenarioMeta.title || 'Generated Scenario', {
+      scenarioText: pendingScenario.scenarioText,
+      briefingText: pendingScenario.briefingText,
+      prologueText: pendingScenario.prologueText,
+      mapFileText: pendingScenario.mapFileText || '',
+      coverImage: pendingScenario.coverImage || '',
+      scenarioMeta: pendingScenario.scenarioMeta || {},
+      lastUpdated: new Date().toISOString()
+    });
+    getAllScenarioMasters().then(setMasterScenarios);
+
+    startInitialChat(pendingScenario.prologueText);
+    showToast('生成したシナリオを読み込みました');
+  });
+
   const restoreTextToInput = (text: string, isGm: boolean) => {
     if (isGm) {
       setIsGmModalOpen(true);
@@ -1606,8 +1642,8 @@ export default function ChatNoir() {
     }
   };
 
-  const buildInitialPrologueHistory = (): AppMessage[] => {
-    const outText = prologueText ? prologueText : '（※プロローグファイルが読み込まれていません。行動を入力して開始してください）';
+  const buildInitialPrologueHistory = (prologueOverride?: string): AppMessage[] => {
+    const outText = prologueOverride || prologueText || '（※プロローグファイルが読み込まれていません。行動を入力して開始してください）';
 
     return [
       { role: 'user', parts: [{ text: '（システム起動：ゲーム開始。プロローグが読み込まれました）' }] },
@@ -1792,6 +1828,11 @@ export default function ChatNoir() {
     };
     runStartupInfo();
   }, []);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    handlePendingGeneratedScenario();
+  }, [isLoaded]);
 
   // SAVES画面を開くたびに最新のセーブデータを再取得する
   useEffect(() => {
@@ -2140,7 +2181,7 @@ export default function ChatNoir() {
   };
 
   // 新規ゲーム開始時にプロローグだけ表示する
-  const startInitialChat = () => {
+  const startInitialChat = (prologueOverride?: string) => {
     setGameState('PLAYING');
     setOpeningFlowStage('PROLOGUE');
     
@@ -2156,7 +2197,7 @@ export default function ChatNoir() {
       }
     }, 200);
 
-    setMessages(buildInitialPrologueHistory());
+    setMessages(buildInitialPrologueHistory(prologueOverride));
     // この時点ではAIへの通信は行わない。プレイヤーがプロローグを読み終えるのを待つ。
   };
 
@@ -3412,8 +3453,12 @@ ${currentMapJson}
   if (gameState === 'WELCOME') {
     return (
       <div className={`${styles.welcomeContainer} fade-in`}>
-        <img src={resolvePublicAssetPath(APP_LOGO_WIDE_PATH)} alt="ChatNoir" className={styles.welcomeLogo} />
+        {isLoaded ? <img src={resolvePublicAssetPath(APP_LOGO_WIDE_PATH)} alt="ChatNoir" className={styles.welcomeLogo} /> : null}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <button className={styles.welcomeBtn} onClick={() => router.push('/create')} style={{ background: 'linear-gradient(135deg, #f5f5f4, #fee2e2)', color: '#111', border: '1px solid rgba(255,255,255,0.8)' }}>
+            シナリオを作る
+          </button>
+
           <button className={styles.welcomeBtn} onClick={() => { resetAllState(); setGameState('LOGIN'); }}>
             新しく入室する
           </button>

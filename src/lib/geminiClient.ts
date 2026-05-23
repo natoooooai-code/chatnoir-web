@@ -1,10 +1,20 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, createPartFromBase64, createPartFromText, createPartFromUri } from '@google/genai';
 import { getValidationPrompt } from '@/lib/validatorPrompt';
 
 type UnknownRecord = Record<string, unknown>;
 
 export interface GeminiChatMessagePart {
   text?: string;
+  inlineData?: {
+    data?: string;
+    mimeType?: string;
+    displayName?: string;
+  };
+  fileData?: {
+    fileUri?: string;
+    mimeType?: string;
+    displayName?: string;
+  };
 }
 
 export interface GeminiChatMessage {
@@ -45,6 +55,7 @@ export interface GeminiChatRequest {
   systemInstruction?: string;
   isReviewMode?: boolean;
   fallbackEnabled?: boolean;
+  maxRetries?: number;
   scenarioMeta?: GeminiScenarioMeta;
   assistantMode?: 'support' | 'gm';
   abortSignal?: AbortSignal;
@@ -73,6 +84,22 @@ export interface GeminiAvatarPromptResponse {
   error?: string;
 }
 
+export interface GeminiFileUploadRequest {
+  apiKey: string;
+  file: Blob;
+  mimeType?: string;
+  displayName?: string;
+  name?: string;
+  abortSignal?: AbortSignal;
+}
+
+export interface GeminiUploadedFile {
+  name: string;
+  uri: string;
+  mimeType: string;
+  displayName?: string;
+}
+
 export interface ApiLikeResponse<T> {
   ok: boolean;
   json: () => Promise<T>;
@@ -89,6 +116,17 @@ const isRecord = (value: unknown): value is UnknownRecord => typeof value === 'o
 const getString = (record: UnknownRecord, key: string): string | undefined => {
   const value = record[key];
   return typeof value === 'string' ? value : undefined;
+};
+
+const hasTextPart = (part: GeminiChatMessagePart): part is GeminiChatMessagePart & { text: string } => typeof part.text === 'string';
+
+export const getTextFromGeminiParts = (parts: GeminiChatMessagePart[] | undefined): string => {
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .filter(hasTextPart)
+    .map((part) => part.text.trim())
+    .filter((text) => text.length > 0)
+    .join('\n');
 };
 
 const getErrorMessage = (error: unknown): string => {
@@ -273,17 +311,83 @@ const isRetriableError = (error: unknown) => {
 const normalizeMessages = (rawMessages: unknown): GeminiChatMessage[] => {
   if (!Array.isArray(rawMessages)) return [];
 
+  const normalizePart = (rawPart: unknown): GeminiChatMessagePart | null => {
+    if (!isRecord(rawPart)) return null;
+
+    const text = getString(rawPart, 'text');
+    if (typeof text === 'string') {
+      return { text };
+    }
+
+    const rawInlineData = rawPart.inlineData;
+    if (isRecord(rawInlineData)) {
+      const data = getString(rawInlineData, 'data');
+      const mimeType = getString(rawInlineData, 'mimeType');
+      if (data && mimeType) {
+        return {
+          inlineData: {
+            data,
+            mimeType,
+            displayName: getString(rawInlineData, 'displayName'),
+          }
+        };
+      }
+    }
+
+    const rawFileData = rawPart.fileData;
+    if (isRecord(rawFileData)) {
+      const fileUri = getString(rawFileData, 'fileUri');
+      const mimeType = getString(rawFileData, 'mimeType');
+      if (fileUri && mimeType) {
+        return {
+          fileData: {
+            fileUri,
+            mimeType,
+            displayName: getString(rawFileData, 'displayName'),
+          }
+        };
+      }
+    }
+
+    return null;
+  };
+
   return rawMessages
     .filter((message): message is UnknownRecord => isRecord(message))
     .map((message) => ({
       role: getString(message, 'role'),
       parts: Array.isArray(message.parts)
         ? message.parts
-            .filter((part): part is UnknownRecord => isRecord(part))
-            .map((part) => ({ text: getString(part, 'text') }))
+            .map((part) => normalizePart(part))
+            .filter((part): part is GeminiChatMessagePart => Boolean(part))
         : []
     }));
 };
+
+const toSdkPart = (part: GeminiChatMessagePart) => {
+  if (typeof part.text === 'string') {
+    return createPartFromText(part.text);
+  }
+
+  if (part.inlineData?.data && part.inlineData.mimeType) {
+    return createPartFromBase64(part.inlineData.data, part.inlineData.mimeType);
+  }
+
+  if (part.fileData?.fileUri && part.fileData.mimeType) {
+    return createPartFromUri(part.fileData.fileUri, part.fileData.mimeType);
+  }
+
+  return null;
+};
+
+const toSdkMessages = (messages: GeminiChatMessage[]) => messages.map((message) => ({
+  role: message.role,
+  parts: Array.isArray(message.parts)
+    ? message.parts
+        .map((part) => toSdkPart(part))
+        .filter((part): part is NonNullable<ReturnType<typeof toSdkPart>> => Boolean(part))
+    : []
+}));
 
 const normalizeScenarioMeta = (rawScenarioMeta: unknown): GeminiScenarioMeta => {
   if (!isRecord(rawScenarioMeta)) return {};
@@ -361,7 +465,7 @@ const fetchWithRetry = async <T>(fn: () => Promise<T>, abortSignal?: AbortSignal
   throw lastError instanceof Error ? lastError : new Error('Request failed');
 };
 
-const createChatGenerator = (ai: GoogleGenAI, requestedModel: string, fallbackEnabled: boolean, abortSignal?: AbortSignal) => {
+const createChatGenerator = (ai: GoogleGenAI, requestedModel: string, fallbackEnabled: boolean, abortSignal?: AbortSignal, maxRetries = 3) => {
   const getModelsToTry = (selected: string, enableFallback: boolean): string[] => {
     if (!enableFallback) return [selected];
     const index = FALLBACK_CHAIN.indexOf(selected);
@@ -380,7 +484,7 @@ const createChatGenerator = (ai: GoogleGenAI, requestedModel: string, fallbackEn
 
     for (const model of models) {
       try {
-        const result = await fetchWithRetry(() => fn(model), abortSignal);
+        const result = await fetchWithRetry(() => fn(model), abortSignal, maxRetries);
         if (model !== requestedModel && (!overrideModelsToTry || overrideModelsToTry[0] !== model)) {
           console.info(`✅ [フォールバック成功] ${overrideModelsToTry ? overrideModelsToTry[0] : requestedModel} → ${model}`);
         }
@@ -404,17 +508,18 @@ const createChatGenerator = (ai: GoogleGenAI, requestedModel: string, fallbackEn
 
 const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiChatResponse> => {
   const messages = normalizeMessages(request.messages);
+  const sdkMessages = toSdkMessages(messages);
   const scenarioMeta = normalizeScenarioMeta(request.scenarioMeta);
 
   if (!request.apiKey) {
     throw new Error('API key is required');
   }
 
-  const lastUserMessage = messages[messages.length - 1]?.parts?.[0]?.text || '';
+  const lastUserMessage = getTextFromGeminiParts(messages[messages.length - 1]?.parts);
   const isSystemCommand = lastUserMessage.startsWith('（システムコマンド：');
   const ai = new GoogleGenAI({ apiKey: request.apiKey });
   const requestedModel = normalizeModelName(request.model);
-  const { generateWithFallback, modelsToTry } = createChatGenerator(ai, requestedModel, request.fallbackEnabled === true, request.abortSignal);
+  const { generateWithFallback, modelsToTry } = createChatGenerator(ai, requestedModel, request.fallbackEnabled === true, request.abortSignal, request.maxRetries ?? 3);
 
   if (request.assistantMode === 'support') {
     const startedAt = Date.now();
@@ -458,7 +563,7 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
 
       const { result: response, usedModel: currentUsedModel } = await generateWithFallback((model) => withAbort(ai.models.generateContent({
         model,
-        contents: messages,
+          contents: sdkMessages,
         config: {
           systemInstruction: retryInstruction,
           temperature: 0.6,
@@ -511,7 +616,7 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
   if (request.assistantMode === 'gm') {
     const { result: response } = await generateWithFallback((model) => withAbort(ai.models.generateContent({
       model,
-      contents: messages,
+      contents: sdkMessages,
       config: {
         systemInstruction: request.systemInstruction || 'あなたはミステリーのゲームマスターです。プレイヤーからのメタな質問に簡潔に答えてください。',
         temperature: 0.4,
@@ -566,7 +671,7 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
       const startedAt = Date.now();
       const { result: response } = await generateWithFallback((model) => withAbort(ai.models.generateContent({
         model,
-        contents: messages,
+        contents: sdkMessages,
         config: {
           systemInstruction: retryInstruction,
           temperature: 0.7,
@@ -702,7 +807,7 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
 
   const { result: response } = await generateWithFallback((model) => withAbort(ai.models.generateContent({
     model,
-    contents: messages,
+    contents: sdkMessages,
     config: {
       systemInstruction: request.systemInstruction || 'あなたはミステリーのゲームマスターです。',
       temperature: 0.7,
@@ -721,7 +826,9 @@ const generateAvatarPrompt = async (request: GeminiAvatarPromptRequest): Promise
   const requestedModel = normalizeModelName(request.model);
   const { generateWithFallback } = createChatGenerator(ai, requestedModel, request.fallbackEnabled === true, request.abortSignal);
   const contextText = Array.isArray(request.messages)
-    ? request.messages.map((message) => `${message.role === 'user' ? 'Player' : 'GM'}: ${message.parts?.[0]?.text || ''}`).join('\n')
+    ? request.messages
+        .map((message) => `${message.role === 'user' ? 'Player' : 'GM'}: ${getTextFromGeminiParts(message.parts)}`)
+        .join('\n')
     : '';
 
   const extractionPrompt = `
@@ -756,6 +863,76 @@ ${contextText || 'なし'}
   };
 };
 
+const blobToBase64Data = async (blob: Blob): Promise<string> => {
+  const arrayBuffer = await blob.arrayBuffer();
+  let binary = '';
+  const bytes = new Uint8Array(arrayBuffer);
+  const chunkSize = 0x8000;
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+
+  return btoa(binary);
+};
+
+export const createInlineGeminiPartFromBlob = async (file: Blob, options: { mimeType?: string; displayName?: string } = {}): Promise<GeminiChatMessagePart> => {
+  const mimeType = options.mimeType || file.type;
+
+  if (!mimeType) {
+    throw new Error('MIME type is required to build an inline media part.');
+  }
+
+  return {
+    inlineData: {
+      data: await blobToBase64Data(file),
+      mimeType,
+      displayName: options.displayName,
+    }
+  };
+};
+
+export const createGeminiFilePart = (file: GeminiUploadedFile): GeminiChatMessagePart => ({
+  fileData: {
+    fileUri: file.uri,
+    mimeType: file.mimeType,
+    displayName: file.displayName,
+  }
+});
+
+export const uploadGeminiFile = async (request: GeminiFileUploadRequest): Promise<GeminiUploadedFile> => {
+  if (!request.apiKey) {
+    throw new Error('API key is required');
+  }
+
+  const mimeType = request.mimeType || request.file.type;
+  if (!mimeType) {
+    throw new Error('MIME type is required when uploading a browser file.');
+  }
+
+  const ai = new GoogleGenAI({ apiKey: request.apiKey });
+  const uploaded = await withAbort(ai.files.upload({
+    file: request.file,
+    config: {
+      mimeType,
+      displayName: request.displayName,
+      name: request.name,
+      abortSignal: request.abortSignal,
+    }
+  }), request.abortSignal);
+
+  if (!uploaded.uri) {
+    throw new Error('Uploaded file did not return a usable URI.');
+  }
+
+  return {
+    name: uploaded.name || '',
+    uri: uploaded.uri,
+    mimeType: uploaded.mimeType || mimeType,
+    displayName: uploaded.displayName || request.displayName,
+  };
+};
+
 const toApiLikeResponse = async <T>(action: () => Promise<T>): Promise<ApiLikeResponse<T>> => {
   try {
     const data = await action();
@@ -775,6 +952,10 @@ const toApiLikeResponse = async <T>(action: () => Promise<T>): Promise<ApiLikeRe
 
 export const requestChatApi = async (request: GeminiChatRequest): Promise<ApiLikeResponse<GeminiChatResponse>> => {
   return await toApiLikeResponse(() => generateChatResponse(request));
+};
+
+export const uploadGeminiFileApi = async (request: GeminiFileUploadRequest): Promise<ApiLikeResponse<GeminiUploadedFile>> => {
+  return await toApiLikeResponse(() => uploadGeminiFile(request));
 };
 
 export const requestAvatarPromptApi = async (request: GeminiAvatarPromptRequest): Promise<ApiLikeResponse<GeminiAvatarPromptResponse>> => {
