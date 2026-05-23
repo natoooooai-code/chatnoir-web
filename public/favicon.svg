@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ChatNoir favicon">
+  <rect width="64" height="64" rx="14" fill="#050505" />
+  <path d="M23 31V19.5C23 14 26.8 10 32 10C37.2 10 41 14 41 19.5V31Z" fill="#d73557" />
+  <path d="M13.5 31.5C17.9 28 24.1 26.1 32 26.1C39.9 26.1 46.1 28 50.5 31.5C47.7 35.4 41.8 37.8 32 37.8C22.2 37.8 16.3 35.4 13.5 31.5Z" fill="#d73557" />
+  <path d="M23.5 29.8H40.5" stroke="#2a0a12" stroke-width="4.2" stroke-linecap="round" />
+</svg>

@@ -5,11 +5,11 @@ const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
 const basePath = process.env.GITHUB_ACTIONS === "true" && repositoryName ? `/${repositoryName}` : "";
 
 export const metadata: Metadata = {
-  title: "ChatNoir Web",
-  description: "A TRPG Mystery Game Interface",
+  title: "ChatNoir",
+  description: "Immersive Mystery Novel Game",
   icons: {
-    icon: `${basePath}/favicon.ico`,
-    shortcut: `${basePath}/favicon.ico`,
+    icon: [{ url: `${basePath}/favicon.svg`, type: "image/svg+xml" }],
+    shortcut: `${basePath}/favicon.svg`,
   },
 };
 
