@@ -20,7 +20,7 @@
 
 .welcomeLogo {
   width: 100%;
-  max-width: 800px;
+  max-width: 720px;
   height: auto;
   margin-bottom: 0.5rem;
   display: block;
@@ -330,9 +330,10 @@
 }
 
 .toast {
-  position: absolute;
+  position: fixed;
   top: 20px;
-  right: 20px;
+  left: 50%;
+  transform: translateX(-50%);
   background: rgba(17, 17, 17, 0.9);
   color: #fff;
   padding: 1rem 2rem;
@@ -342,6 +343,9 @@
   letter-spacing: 1px;
   animation: fadeIn 0.3s ease forwards;
   box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+  width: max-content;
+  max-width: min(90vw, 520px);
+  text-align: center;
 }
 
 .scrollBottomBtn {

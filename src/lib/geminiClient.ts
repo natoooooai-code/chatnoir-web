@@ -169,6 +169,8 @@ const toSupportPayload = (record: UnknownRecord): SupportPayload => {
   };
 };
 
+const sanitizeJsonLikeText = (text: string): string => text.replace(/[\u0000-\u001F\u007F\u2028\u2029]/g, ' ');
+
 const tryParseEmbeddedSupportPayload = (text: string): SupportPayload | null => {
   const jsonStart = text.indexOf('{');
   const jsonEnd = text.lastIndexOf('}');
@@ -176,7 +178,7 @@ const tryParseEmbeddedSupportPayload = (text: string): SupportPayload | null => 
   if (jsonStart === -1 || jsonEnd <= jsonStart) return null;
 
   try {
-    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as unknown;
+    const parsed = JSON.parse(sanitizeJsonLikeText(text.slice(jsonStart, jsonEnd + 1))) as unknown;
     if (!isRecord(parsed)) return null;
     return toSupportPayload(parsed);
   } catch {
@@ -587,7 +589,7 @@ const generateChatResponse = async (request: GeminiChatRequest): Promise<GeminiC
           const jsonEnd = rawText.lastIndexOf('}');
           if (jsonStart !== -1 && jsonEnd !== -1) rawText = rawText.slice(jsonStart, jsonEnd + 1);
         }
-        supportPayload = normalizeSupportPayload(JSON.parse(rawText) as unknown);
+        supportPayload = normalizeSupportPayload(JSON.parse(sanitizeJsonLikeText(rawText)) as unknown);
         hasParsedSupportPayload = true;
         break;
       } catch (error) {

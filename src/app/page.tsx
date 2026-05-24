@@ -451,12 +451,12 @@ type SupportResponseResult = {
 };
 
 const DEFAULT_OPEN_SECTIONS: SidebarOpenSections = {
-  howTo: true,
-  monologue: true,
-  characters: true,
-  facts: true,
-  mysteries: true,
-  memo: true
+  howTo: false,
+  monologue: false,
+  characters: false,
+  facts: false,
+  mysteries: false,
+  memo: false
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
@@ -642,12 +642,12 @@ const normalizeSidebarOpenSections = (value: unknown): SidebarOpenSections | und
   if (!isRecord(value)) return undefined;
 
   return {
-    howTo: value.howTo !== false,
-    monologue: value.monologue !== false,
-    characters: value.characters !== false,
-    facts: value.facts !== false,
-    mysteries: value.mysteries !== false,
-    memo: value.memo !== false
+    howTo: value.howTo === true,
+    monologue: value.monologue === true,
+    characters: value.characters === true,
+    facts: value.facts === true,
+    mysteries: value.mysteries === true,
+    memo: value.memo === true
   };
 };
 
@@ -1189,7 +1189,7 @@ export default function ChatNoir() {
   const [fallbackEnabled, setFallbackEnabled] = useState(true);
 
   // サイドバーの開閉状態
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const [charactersData, setCharactersData] = useState<CharacterData[]>([]);
   const [factsData, setFactsData] = useState<string[]>([]);
@@ -1501,7 +1501,9 @@ export default function ChatNoir() {
   // チャットの状態管理
   const [messages, setMessages] = useState<AppMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState<{ message: string; tone: 'neutral' | 'warning' } | null>(null);
   const latestMessagesRef = useRef<AppMessage[]>([]);
+  const loadingStatusTimeoutRef = useRef<number | null>(null);
   const regenerateMessageRef = useRef<((index: number) => void) | null>(null);
   const [recoverableSend, setRecoverableSend] = useState<RecoverableSendState | null>(null);
   const recoverableSendRef = useRef<RecoverableSendState | null>(null);
@@ -1668,6 +1670,39 @@ export default function ChatNoir() {
     setTimeout(() => setToastMsg(''), 3000);
   };
 
+  const clearLoadingStatusTimer = () => {
+    if (loadingStatusTimeoutRef.current === null || typeof window === 'undefined') return;
+    window.clearTimeout(loadingStatusTimeoutRef.current);
+    loadingStatusTimeoutRef.current = null;
+  };
+
+  const clearLoadingStatus = () => {
+    clearLoadingStatusTimer();
+    setLoadingStatus(null);
+  };
+
+  const showLoadingStatus = (
+    message: string,
+    tone: 'neutral' | 'warning' = 'neutral',
+    autoHideMs?: number,
+  ) => {
+    clearLoadingStatusTimer();
+    setLoadingStatus({ message, tone });
+
+    if (typeof window !== 'undefined' && autoHideMs) {
+      loadingStatusTimeoutRef.current = window.setTimeout(() => {
+        setLoadingStatus(null);
+        loadingStatusTimeoutRef.current = null;
+      }, autoHideMs);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      clearLoadingStatusTimer();
+    };
+  }, []);
+
   const handlePendingGeneratedScenario = useEffectEvent(() => {
     const pendingScenario = consumePendingGeneratedScenario();
     if (!pendingScenario) return;
@@ -1729,7 +1764,7 @@ export default function ChatNoir() {
   const stopScenarioDebugMode = (options: { showToast?: boolean; reason?: string; abortRequests?: boolean } = {}) => {
     const {
       showToast: shouldShowToast = true,
-      reason = 'シナリオデバッグモードを停止しました',
+      reason = 'オートプレイを停止しました',
       abortRequests = true,
     } = options;
 
@@ -1816,7 +1851,7 @@ export default function ChatNoir() {
     if (parsed.isVertical !== undefined) setIsVertical(parsed.isVertical);
     if (parsed.sidebarWidth !== undefined) setSidebarWidth(parsed.sidebarWidth);
     if (parsed.leftSidebarWidth !== undefined) setLeftSidebarWidth(parsed.leftSidebarWidth);
-    setIsSidebarOpen(parsed.isSidebarOpen !== undefined ? parsed.isSidebarOpen : true);
+    setIsSidebarOpen(parsed.isSidebarOpen !== undefined ? parsed.isSidebarOpen : false);
     setSessionRunId(parsed.sessionRunId || '');
     setSaveName(parsed.saveName || '');
     setPlayerMemo(parsed.playerMemo || '');
@@ -2320,6 +2355,11 @@ export default function ChatNoir() {
   // プレイヤーがプロローグを読み終え、「物語に入る」を押した時の処理
   const startPhase2 = async () => {
     setOpeningFlowStage('MAIN');
+    showLoadingStatus(
+      fallbackEnabled
+        ? '物語の導入を準備しています。混雑時は別モデルで続行します。'
+        : '物語の導入を準備しています。',
+    );
     setIsLoading(true);
 
     // メインゲーム開始のシステム通知を履歴に追加
@@ -2342,6 +2382,7 @@ export default function ChatNoir() {
       });
       const data = await res.json();
       if (res.ok) {
+        clearLoadingStatus();
         const phase2Response: AppMessage = {
           role: 'model',
           parts: [{ text: typeof data.text === 'string' ? data.text : '' }]
@@ -2364,6 +2405,13 @@ export default function ChatNoir() {
           ? "【サーバー混雑】AIが一時的に利用できません。1分ほど待ってから再度「物語に入る」を押してください。"
           : `エラーが発生しました: ${errorStr}`;
 
+        showLoadingStatus(
+          isOverloaded
+            ? 'AIが混み合っています。少し待ってからもう一度試してください。'
+            : '物語の準備に失敗しました。少し待ってからやり直してください。',
+          'warning',
+          5000,
+        );
         showToast(displayMsg);
         // 開発時のエラーオーバーレイ表示を避けるため、想定内のAPIエラーはconsole.warnに留める
         console.warn(`${displayMsg} (API Response: ${errorStr})`);
@@ -2374,6 +2422,7 @@ export default function ChatNoir() {
     } catch (err: unknown) {
       const isAbort = isAbortError(err);
       if (!isAbort) {
+        showLoadingStatus('通信が不安定です。接続を確認してもう一度試してください。', 'warning', 5000);
         showToast("通信エラーが発生しました。ネットワーク設定を確認してください。");
         console.warn("フェーズ2開始通信エラー:", getErrorMessage(err));
         setOpeningFlowStage('INTRODUCTION');
@@ -2387,6 +2436,7 @@ export default function ChatNoir() {
   // --- 特殊コマンド（JSON抽出） ---
   const requestSpecialCommand = async (commandType: 'characters' | 'facts' | 'mysteries' | 'monologue' | 'map', overrideMessages?: AppMessage[]) => {
     if (isLoading) return;
+    showLoadingStatus('手帳情報を整理しています。');
     setIsLoading(true);
     setIsSidebarUpdating(true);
     if (commandType === 'map') setIsMapUpdating(true);
@@ -2481,6 +2531,7 @@ ${currentMapJson}
       });
       const data = await res.json();
       if (res.ok) {
+        clearLoadingStatus();
         // 返ってきた文字列からJSONだけを強引に抽出
         let jsonStr = data.text;
         const startIndex = jsonStr.indexOf('{');
@@ -2569,6 +2620,13 @@ ${currentMapJson}
     } catch (err) {
       console.error("コマンド実行失敗:", err);
       const isOverloaded = err instanceof Error && (err.message.includes('503') || err.message.includes('demand') || err.message.includes('UNAVAILABLE'));
+      showLoadingStatus(
+        isOverloaded
+          ? 'AIが混み合っており、手帳情報の更新に時間がかかっています。'
+          : '手帳情報の更新に失敗しました。少し待ってから再試行してください。',
+        'warning',
+        5000,
+      );
       const msg = isOverloaded
         ? "【お知らせ】現在AIが非常に混み合っており、情報の更新に失敗しました。少し時間をおいてから、再度「更新」ボタンを押してみてください。"
         : "情報の取得・解析に失敗しました。一時的な通信エラーの可能性があります。";
@@ -2767,6 +2825,12 @@ ${currentMapJson}
     setIsSupportSidebarOpen(false);
   };
 
+  const stopSupportRequest = () => {
+    if (!supportAbortControllerRef.current || !isSupportLoading) return;
+    supportAbortControllerRef.current.abort();
+    showToast('ロアへの相談を停止しました');
+  };
+
   const sendSupportMessage = async (overrideText?: string, options: { suppressPersonaNotice?: boolean } = {}): Promise<SupportResponseResult | null> => {
     const textToSend = overrideText !== undefined ? overrideText : (supportInputRef.current?.getCurrentText() ?? '');
     const suppressPersonaNotice = options.suppressPersonaNotice === true;
@@ -2900,8 +2964,8 @@ ${currentMapJson}
         abortRequests: false,
       });
       showToast(isSupportPersonaLoading
-        ? 'ロア人格プロンプトの読み込み完了前のため、シナリオデバッグモードを停止しました'
-        : 'support-personas/lore-support.md を読めないため、シナリオデバッグモードを停止しました');
+        ? 'ロア人格プロンプトの読み込み完了前のため、オートプレイを停止しました'
+        : 'support-personas/lore-support.md を読めないため、オートプレイを停止しました');
       return;
     }
 
@@ -2918,7 +2982,7 @@ ${currentMapJson}
         showToast: false,
         abortRequests: false,
       });
-      showToast('シナリオデバッグモードを停止しました。自動入力候補を作れませんでした');
+      showToast('オートプレイを停止しました。自動入力候補を作れませんでした');
       return;
     }
 
@@ -3113,7 +3177,7 @@ ${currentMapJson}
     if (!isSupportSidebarOpen && !isSupportModalOpen) {
       setIsSupportModalOpen(true);
     }
-    showToast('シナリオデバッグモードを開始しました');
+    showToast('オートプレイを開始しました');
     void runScenarioDebugStep();
   };
 
@@ -3143,10 +3207,15 @@ ${currentMapJson}
     setMessages(newHistory);
     setRecoverableSendState(automatedByDebug ? null : { text: textToSend, previousMessages, isGm });
     
+    showLoadingStatus(
+      fallbackEnabled
+        ? '返答を準備しています。混雑時は別モデルで続行します。'
+        : '返答を準備しています。',
+    );
     setIsLoading(true);
     debugAutomatedMessageRef.current = automatedByDebug;
     // 手動送信時だけ一番下（最新の自分の入力）までスクロールさせる。
-    // シナリオデバッグモードの自動送信では、読んでいる位置を維持する。
+    // オートプレイの自動送信では、読んでいる位置を維持する。
     if (!automatedByDebug) {
       setTimeout(() => scrollToBottom(), 100);
     }
@@ -3168,6 +3237,7 @@ ${currentMapJson}
       });
       const data = await res.json();
       if (res.ok) {
+        clearLoadingStatus();
         setRecoverableSendState(null);
         const nextModelMessage: AppMessage = {
           role: 'model',
@@ -3189,7 +3259,7 @@ ${currentMapJson}
               showToast: false,
               abortRequests: false,
             });
-            showToast('シナリオデバッグモードを停止しました。エンディングに到達しました');
+            showToast('オートプレイを停止しました。エンディングに到達しました');
           } else if (isScenarioDebugModeRef.current) {
             void runScenarioDebugStep();
           } else if (isAutoSupportMode && isSupportPersonaReady) {
@@ -3202,6 +3272,13 @@ ${currentMapJson}
         const msg = isOverloaded
           ? "【ご案内】現在、AIサーバーが一時的に非常に混み合っています。自動リトライを行いましたが解決しませんでした。数十秒ほど待ってから、もう一度送信してみてください。"
           : "エラーが発生しました: " + errorStr;
+        showLoadingStatus(
+          isOverloaded
+            ? 'AIが混み合っています。少し待ってからもう一度送信してください。'
+            : '返答の取得に失敗しました。少し待ってから再送してください。',
+          'warning',
+          5000,
+        );
         showAppAlert(msg);
         
         // 再送処理：履歴からユーザー発言を取り除き、入力欄に戻す
@@ -3215,13 +3292,14 @@ ${currentMapJson}
             showToast: false,
             abortRequests: false,
           });
-          showToast('シナリオデバッグモードを停止しました。自動送信に失敗しました');
+          showToast('オートプレイを停止しました。自動送信に失敗しました');
         }
       }
     } catch (err: unknown) {
       if (isAbortError(err)) {
         console.log("出力が中断されました");
       } else {
+        showLoadingStatus('通信が不安定です。接続を確認してからもう一度送信してください。', 'warning', 5000);
         console.error(err);
         showAppAlert("通信に失敗しました。");
       }
@@ -3237,7 +3315,7 @@ ${currentMapJson}
           showToast: false,
           abortRequests: false,
         });
-        showToast('シナリオデバッグモードを停止しました。自動送信に失敗しました');
+        showToast('オートプレイを停止しました。自動送信に失敗しました');
       }
     } finally {
       setIsLoading(false);
@@ -3283,6 +3361,11 @@ ${currentMapJson}
     const newHistory: AppMessage[] = [...baseHistory, { role: 'user', parts: [{ text: prompt }], isHidden: isInitial }];
     setReviewMessages(newHistory);
     setReviewInputText('');
+    showLoadingStatus(
+      fallbackEnabled
+        ? '感想戦の返答を準備しています。混雑時は別モデルで続行します。'
+        : '感想戦の返答を準備しています。',
+    );
     setIsLoading(true);
 
     abortControllerRef.current = new AbortController();
@@ -3313,6 +3396,7 @@ ${currentMapJson}
       });
       const data = await res.json();
       if (res.ok) {
+        clearLoadingStatus();
         const nextReviewMessage: AppMessage = {
           role: 'model',
           parts: [{ text: typeof data.text === 'string' ? data.text : '' }]
@@ -3320,12 +3404,14 @@ ${currentMapJson}
         setReviewMessages([...newHistory, nextReviewMessage]);
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+        showLoadingStatus('感想戦の返答取得に失敗しました。少し待ってから再試行してください。', 'warning', 5000);
         showAppAlert("エラーが発生しました: " + errorStr);
         setReviewMessages(baseHistory);
         if (!isInitial) setReviewInputText(prompt);
       }
     } catch (err: unknown) {
       if (!isAbortError(err)) {
+        showLoadingStatus('通信が不安定です。接続を確認してからもう一度試してください。', 'warning', 5000);
         console.error(err);
         showAppAlert("通信に失敗しました。");
       }
@@ -3349,6 +3435,11 @@ ${currentMapJson}
 
     latestMessagesRef.current = historyForRequest;
     setMessages(historyForRequest);
+    showLoadingStatus(
+      fallbackEnabled
+        ? '返答を再生成しています。混雑時は別モデルで続行します。'
+        : '返答を再生成しています。',
+    );
     setIsLoading(true);
     abortControllerRef.current = new AbortController();
 
@@ -3367,6 +3458,7 @@ ${currentMapJson}
       });
       const data = await res.json();
       if (res.ok) {
+        clearLoadingStatus();
         const newModelMessage: AppMessage = {
           role: 'model',
           parts: [{ text: typeof data.text === 'string' ? data.text : '' }],
@@ -3380,12 +3472,16 @@ ${currentMapJson}
         latestMessagesRef.current = capturedMessages;
         setMessages(capturedMessages);
         const errStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+        showLoadingStatus('再生成に失敗しました。少し待ってからもう一度試してください。', 'warning', 5000);
         showAppAlert('再生成に失敗しました: ' + errStr);
       }
     } catch (err: unknown) {
       latestMessagesRef.current = capturedMessages;
       setMessages(capturedMessages);
-      if (!isAbortError(err)) showAppAlert('再生成中にエラーが発生しました。');
+      if (!isAbortError(err)) {
+        showLoadingStatus('通信が不安定です。接続を確認してから再生成してください。', 'warning', 5000);
+        showAppAlert('再生成中にエラーが発生しました。');
+      }
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
@@ -3484,7 +3580,7 @@ ${currentMapJson}
             <button onClick={() => setIsSupportSidebarOpen(false)} style={{ background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '0.4rem 0.9rem', letterSpacing: '1px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.78rem', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>閉じる</button>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <button onClick={() => { setIsSupportModalOpen(false); setIsSupportSidebarOpen(true); }} style={{ background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '0.4rem 0.9rem', letterSpacing: '1px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.78rem', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>左で開く</button>
+              <button onClick={() => { setIsSupportModalOpen(false); setIsSupportSidebarOpen(true); }} style={{ background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '0.4rem 0.9rem', letterSpacing: '1px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.78rem', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>左サイドで開く</button>
               <button onClick={closeSupportPanels} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
             </div>
           )}
@@ -3568,15 +3664,16 @@ ${currentMapJson}
           disabled={isSupportActionDisabled}
           style={{ width: '100%', minHeight: '72px', maxHeight: '140px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit', flexShrink: 0 }}
           placeholder={isScenarioDebugMode
-            ? 'シナリオデバッグモード中です。停止すると手動で相談できます。'
+            ? 'オートプレイ中です。停止すると手動で相談できます。'
             : isSupportPersonaLoading
               ? 'ロア人格プロンプトを読み込み中です。'
               : supportPersonaLoadError
                 ? 'support-personas/lore-support.md を確認して再読込してください。'
                 : '例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて'}
         />
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: isSidebarVariant ? '1.5rem' : '0' }}>
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'stretch', marginBottom: isSidebarVariant ? '1.5rem' : '0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <button onClick={() => sendSupportMessage(SUPPORT_SUGGESTION_PROMPT)} disabled={isSupportActionDisabled} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, fontSize: '0.85rem' }}>ロアにおまかせ</button>
             <button
               type="button"
@@ -3593,6 +3690,14 @@ ${currentMapJson}
               </div>
               自動
             </button>
+            </div>
+            {isSupportLoading && !isScenarioDebugMode ? (
+              <button onClick={stopSupportRequest} style={{ background: 'transparent', color: '#d6b26e', border: '1px solid rgba(214,178,110,0.7)', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer', transition: '0.2s' }}>停止</button>
+            ) : (
+              <button onClick={() => void sendSupportMessage()} disabled={isSupportActionDisabled} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
+            )}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
             <button
               onClick={isScenarioDebugMode ? () => stopScenarioDebugMode() : () => startScenarioDebugMode()}
               disabled={!isScenarioDebugMode && (isLoading || isSupportLoading)}
@@ -3608,10 +3713,9 @@ ${currentMapJson}
                 fontWeight: 600,
               }}
             >
-              {isScenarioDebugMode ? 'デバッグ停止' : 'シナリオデバッグ開始'}
+              {isScenarioDebugMode ? 'オートプレイ停止' : 'オートプレイ'}
             </button>
           </div>
-          <button onClick={() => { const t = supportInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { supportInputRef.current?.clear(); sendSupportMessage(t); } }} disabled={isSupportActionDisabled} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
         </div>
       </div>
     );
@@ -3672,19 +3776,24 @@ ${currentMapJson}
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                  <label htmlFor="library-api-key" style={{ fontSize: '0.8rem', color: '#bdbdbd', letterSpacing: '0.8px' }}>Google AI Studio API Key</label>
+                  <label htmlFor="library-api-key" style={{ fontSize: '0.8rem', color: '#bdbdbd', letterSpacing: '0.8px' }}>Google AI Studio API キー</label>
                   <input
                     id="library-api-key"
                     type="password"
                     name="libraryApiKey"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="Google AI Studio API Key"
+                    placeholder="Google AI Studio API キー"
                     style={{ width: '100%', padding: '0.85rem 0.95rem', background: '#0d0d0d', color: '#f5f5f5', border: '1px solid #2f2f2f', borderRadius: '6px', fontFamily: 'inherit' }}
                   />
-                  <p style={{ margin: 0, fontSize: '0.72rem', color: '#7a7a7a', lineHeight: 1.7 }}>
-                    入力した API キーは GitHub には保存されず、このブラウザ内だけで扱われます。
-                  </p>
+                  <a
+                    href="https://aistudio.google.com/app/api-keys"
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: '#9fb6ff', fontSize: '0.72rem', lineHeight: 1.7, textDecoration: 'underline', textUnderlineOffset: '3px' }}
+                  >
+                    Google AI Studio で API キーを取得する
+                  </a>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
@@ -3701,7 +3810,7 @@ ${currentMapJson}
                     }}
                     style={{ width: '100%', padding: '0.85rem 0.95rem', background: '#0d0d0d', color: '#f5f5f5', border: '1px solid #2f2f2f', borderRadius: '6px', fontFamily: 'inherit' }}
                   >
-                    <option value="session">一時保存: ブラウザを閉じると消える（推奨）</option>
+                    <option value="session">一時保存: ブラウザを閉じると消える</option>
                     <option value="local">この端末に保存: 次回も自動入力する</option>
                   </select>
                 </div>
@@ -4010,7 +4119,7 @@ ${currentMapJson}
                 ファイルを一括選択
               </p>
               <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-                設定ファイル・概要・プロローグ・ルール・画像を<br />まとめて選択して一気に準備できます。
+                設定ファイル・概要・プロローグ・ルール・画像を<br />まとめてアップロード
               </p>
               {scenarioSetupReadyCount > 0 ? (
                 <div
@@ -4027,7 +4136,7 @@ ${currentMapJson}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
                     <strong style={{ fontSize: '0.9rem', letterSpacing: '0.4px' }}>
-                      {scenarioSetupReadyCount === 6 ? '読み込み完了' : '読み込み中'}
+                      {scenarioSetupReadyCount === 6 ? '読み込み完了' : '読み込み済み'}
                     </strong>
                     <span style={{ fontSize: '0.78rem', fontWeight: 700, padding: '0.2rem 0.55rem', borderRadius: '999px', background: 'rgba(255,255,255,0.7)' }}>
                       {scenarioSetupReadyCount}/6 項目
@@ -4036,7 +4145,7 @@ ${currentMapJson}
                   <p style={{ margin: '0.45rem 0 0', fontSize: '0.76rem', lineHeight: 1.6, color: '#334155' }}>
                     {scenarioSetupReadyCount === 6
                       ? '必要な項目はすべて反映済みです。このまま物語の準備へ進めます。'
-                      : '選択した内容は反映済みです。残りの項目を追加するか、再選択して上書きできます。'}
+                      : '残りの項目を追加するか、再選択して上書きできます。'}
                   </p>
                 </div>
               ) : null}
@@ -4061,7 +4170,7 @@ ${currentMapJson}
             </div>
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
               <p style={{ fontSize: '0.8rem', color: '#111', marginBottom: '0.5rem', fontFamily: 'var(--font-serif)', letterSpacing: '1px' }}>
-                <IconImage /> パッケージ画像
+                <IconImage /> パッケージ画像（任意）
                 {coverImage && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
               <FileUploadTrigger accept="image/*" inputName="coverImageFile" onChange={(e) => {
@@ -4072,7 +4181,7 @@ ${currentMapJson}
                   reader.readAsDataURL(file);
                 }
                 e.target.value = '';
-              }} helperText={coverImage ? '画像を読み込み済みです。再選択すると上書きします。' : 'パッケージ画像を選ぶとここに反映されます。'} />
+              }} helperText={coverImage ? '再選択すると上書きします。' : undefined} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -4080,7 +4189,7 @@ ${currentMapJson}
                 <IconFile /> 設定ファイル
                 {scenarioText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <FileUploadTrigger accept=".md,.txt" inputName="scenarioTextFile" onChange={(e) => handleFileRead(e, setScenarioText)} helperText={scenarioText ? '設定ファイルを読み込み済みです。再選択すると上書きします。' : '設定ファイルを選ぶとここに反映されます。'} />
+              <FileUploadTrigger accept=".md,.txt" inputName="scenarioTextFile" onChange={(e) => handleFileRead(e, setScenarioText)} helperText={scenarioText ? '再選択すると上書きします。' : undefined} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -4088,7 +4197,7 @@ ${currentMapJson}
                 <IconFile /> 概要ファイル
                 {briefingText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <FileUploadTrigger accept=".md,.txt" inputName="briefingFile" onChange={(e) => handleFileRead(e, setBriefingText)} helperText={briefingText ? '概要ファイルを読み込み済みです。再選択すると上書きします。' : '概要ファイルを選ぶとここに反映されます。'} />
+              <FileUploadTrigger accept=".md,.txt" inputName="briefingFile" onChange={(e) => handleFileRead(e, setBriefingText)} helperText={briefingText ? '再選択すると上書きします。' : undefined} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -4096,7 +4205,7 @@ ${currentMapJson}
                 <IconFile /> プロローグ
                 {prologueText && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <FileUploadTrigger accept=".md,.txt" inputName="prologueFile" onChange={(e) => handleFileRead(e, setPrologueText)} helperText={prologueText ? 'プロローグを読み込み済みです。再選択すると上書きします。' : 'プロローグファイルを選ぶとここに反映されます。'} />
+              <FileUploadTrigger accept=".md,.txt" inputName="prologueFile" onChange={(e) => handleFileRead(e, setPrologueText)} helperText={prologueText ? '再選択すると上書きします。' : undefined} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -4126,7 +4235,7 @@ ${currentMapJson}
                   reader.readAsText(file);
                 }
                 e.target.value = '';
-              }} helperText={mapFileText ? 'マップ情報を読み込み済みです。再選択すると上書きします。' : '地図ファイルを選ぶとここに反映されます。'} />
+              }} helperText={mapFileText ? '再選択すると上書きします。' : undefined} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -4152,7 +4261,7 @@ ${currentMapJson}
                   reader.readAsText(file);
                 }
                 e.target.value = '';
-              }} helperText={hasRequiredScenarioMeta(scenarioMeta) ? '主人公名と一人称を読み込み済みです。再選択すると上書きします。' : 'メタデータファイルから主人公名と一人称を読み込みます。'} />
+              }} helperText={hasRequiredScenarioMeta(scenarioMeta) ? '再選択すると上書きします。' : undefined} />
             </div>
 
 
@@ -4165,7 +4274,7 @@ ${currentMapJson}
                 }
               </p>
               <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>独自ルールに差し替える場合のみアップロード</p>
-              <FileUploadTrigger accept=".md,.txt" inputName="gmRuleFile" onChange={(e) => { handleFileRead(e, setGmRuleText); setIsCustomGmRule(true); }} helperText={isCustomGmRule ? '現在はカスタムルールを反映中です。再選択すると上書きします。' : '内蔵ルールを使う場合はアップロード不要です。'} />
+              <FileUploadTrigger accept=".md,.txt" inputName="gmRuleFile" onChange={(e) => { handleFileRead(e, setGmRuleText); setIsCustomGmRule(true); }} helperText={isCustomGmRule ? '再選択すると上書きします。' : undefined} />
             </div>
 
             <button
@@ -4263,7 +4372,16 @@ ${currentMapJson}
                   </div>
                 );
               })}
-              {isLoading && <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', padding: '1rem', fontSize: '0.9rem' }}>🖋 GMが執筆中……</p>}
+              {(isLoading || loadingStatus) && (
+                <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', padding: '1rem', fontSize: '0.9rem' }}>
+                  {isLoading ? <div>🖋 GMが執筆中……</div> : null}
+                  {loadingStatus ? (
+                    <div style={{ marginTop: isLoading ? '0.45rem' : 0, color: loadingStatus.tone === 'warning' ? '#d6b26e' : 'var(--text-muted)', lineHeight: 1.7 }}>
+                      {loadingStatus.message}
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
@@ -4400,9 +4518,14 @@ ${currentMapJson}
             </div>
           )}
 
-          {isLoading && (
+          {(isLoading || loadingStatus) && (
             <div className="fade-in writing-indicator" style={{ color: 'var(--text-muted)', marginTop: '2rem', fontStyle: 'italic' }}>
-              🖋 執筆中……
+              {isLoading ? <div>🖋 執筆中……</div> : null}
+              {loadingStatus ? (
+                <div style={{ marginTop: isLoading ? '0.45rem' : 0, color: loadingStatus.tone === 'warning' ? '#d6b26e' : 'var(--text-muted)', fontSize: '0.92rem', lineHeight: 1.7 }}>
+                  {loadingStatus.message}
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -4609,7 +4732,7 @@ ${currentMapJson}
               name="mainMessage"
               className={styles.chatInput}
               style={{ minHeight: '80px', maxHeight: '300px', flex: 1, resize: 'none', padding: '12px' }}
-              placeholder={isScenarioDebugMode ? 'シナリオデバッグモード実行中です。停止すると手動入力できます。' : 'Enterで送信、Shift+Enterで改行'}
+              placeholder={isScenarioDebugMode ? 'オートプレイ実行中です。停止すると手動入力できます。' : 'Enterで送信、Shift+Enterで改行'}
               onSend={(text) => { sendMessage(text); }}
               disabled={isLoading || gameState === 'BRIEFING' || isScenarioDebugMode}
             />
@@ -4643,8 +4766,15 @@ ${currentMapJson}
                         </div>
                       ))
                     )}
-                    {isLoading && messages[messages.length - 1]?.isGm && messages[messages.length - 1]?.role === 'user' && (
-                      <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.9rem', textAlign: 'center' }}>🖋 GMが執筆中……</p>
+                    {(isLoading || loadingStatus) && messages[messages.length - 1]?.isGm && messages[messages.length - 1]?.role === 'user' && (
+                      <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.9rem', textAlign: 'center' }}>
+                        {isLoading ? <div>🖋 GMが執筆中……</div> : null}
+                        {loadingStatus ? (
+                          <div style={{ marginTop: isLoading ? '0.45rem' : 0, color: loadingStatus.tone === 'warning' ? '#d6b26e' : 'var(--text-muted)', lineHeight: 1.7 }}>
+                            {loadingStatus.message}
+                          </div>
+                        ) : null}
+                      </div>
                     )}
                   </div>
 

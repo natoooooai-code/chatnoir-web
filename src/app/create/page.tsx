@@ -97,9 +97,9 @@ const API_KEY_STORAGE_MODE_KEY = 'chatnoir_apiKeyStorageMode';
 const CREATE_DRAFT_STORAGE_KEY = 'chatnoir_scenarioCreateDraft_v1';
 const PHASE_ORDER: GenerationPhaseId[] = ['phase1', 'phase2', 'phase3a', 'phase3b', 'phase4'];
 const MODEL_OPTIONS = [
-  { value: 'gemma-4-31b-it', label: 'Gemma 4 31B' },
+  { value: 'gemma-4-31b-it', label: 'Gemma 4 31B（推奨）' },
   { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
+  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite（軽量・安定）' },
 ] as const;
 const PROMPT_PATHS: Record<GenerationPhaseId, string> = {
   phase1: 'scenario-generation-prompts/01_concept_design_app.md',
@@ -109,19 +109,19 @@ const PROMPT_PATHS: Record<GenerationPhaseId, string> = {
   phase4: 'scenario-generation-prompts/04_scenario_revision_app.md',
 };
 const PHASE_DEFINITIONS: PhaseCardDefinition[] = [
-  { id: 'phase1', label: 'Phase 1 アイデア / プロローグ（仮）' },
-  { id: 'phase2', label: 'Phase 2 シナリオ構築' },
-  { id: 'phase3a', label: 'Phase 3a エンタメチェック' },
-  { id: 'phase3b', label: 'Phase 3b ロジックチェック' },
-  { id: 'phase4', label: 'Phase 4 最終修正' },
+  { id: 'phase1', label: 'ステップ1 アイデアを入力 / プロローグ（仮）' },
+  { id: 'phase2', label: 'ステップ2 シナリオ構築' },
+  { id: 'phase3a', label: 'ステップ3a エンタメチェック' },
+  { id: 'phase3b', label: 'ステップ3b ロジックチェック' },
+  { id: 'phase4', label: 'ステップ4 最終修正' },
 ];
 const GENERATION_SYSTEM_INSTRUCTION = 'あなたはシナリオ生成専用アシスタントです。これはゲーム本編進行ではありません。scene_blocks 形式の JSON、位置や時刻のステータス行、📍 や 🕐 の記号付き行、ゲームマスターとしての進行文は禁止です。与えられたプロンプトの出力フォーマットに厳密に従い、通常の Markdown / JSON コードブロックだけを返してください。';
 const PHASE_OUTPUT_WRAPPERS: Record<GenerationPhaseId, string> = {
-  phase1: '【アプリ側の出力要求】これはコンセプト設計フェーズです。ゲーム本編の応答や現在地・時刻の表示は不要です。通常の Markdown のみを返してください。',
-  phase2: '【アプリ側の出力要求】これはシナリオ構築フェーズです。追加の出力指示に厳密に従い、今回要求されたファイルだけを返してください。',
+  phase1: '【アプリ側の出力要求】これはコンセプト設計ステップです。ゲーム本編の応答や現在地・時刻の表示は不要です。通常の Markdown のみを返してください。',
+  phase2: '【アプリ側の出力要求】これはシナリオ構築ステップです。追加の出力指示に厳密に従い、今回要求されたファイルだけを返してください。',
   phase3a: '【アプリ側の出力要求】エンタメチェック結果のみを Markdown で返してください。ゲーム本編の描写やステータス行は禁止です。',
   phase3b: '【アプリ側の出力要求】ロジックチェック結果のみを Markdown で返してください。ゲーム本編の描写やステータス行は禁止です。',
-  phase4: '【アプリ側の出力要求】これは最終修正フェーズです。追加の出力指示に厳密に従い、今回要求されたファイルだけを返してください。',
+  phase4: '【アプリ側の出力要求】これは最終修正ステップです。追加の出力指示に厳密に従い、今回要求されたファイルだけを返してください。',
 };
 
 const PHASE2_BUNDLE_OUTPUTS: PhaseBundleOutputDefinition[] = [
@@ -330,15 +330,15 @@ const createAbortError = () => new DOMException('The operation was aborted.', 'A
 const createArtifactLabel = (phaseId: GenerationPhaseId): string => {
   switch (phaseId) {
     case 'phase1':
-      return 'Phase 1 コンセプト';
+      return 'ステップ1 コンセプト';
     case 'phase2':
-      return 'Phase 2 シナリオ構築';
+      return 'ステップ2 シナリオ構築';
     case 'phase3a':
-      return 'Phase 3a エンタメチェック';
+      return 'ステップ3a エンタメチェック';
     case 'phase3b':
-      return 'Phase 3b ロジックチェック';
+      return 'ステップ3b ロジックチェック';
     case 'phase4':
-      return 'Phase 4 最終修正';
+      return 'ステップ4 最終修正';
   }
 };
 
@@ -1032,7 +1032,7 @@ export default function ScenarioCreatePage() {
     const phase2Prompt = `${PHASE_OUTPUT_WRAPPERS.phase2}\n\n${replacePromptPlaceholders(
       promptTemplates.phase2,
       buildPromptReplacements('phase2', {
-        HOOK_APPROVAL_TRANSCRIPT: approvalTranscriptOverride || hookApprovalTranscript || 'User: Hook を承認。Phase 2 へ進行。',
+        HOOK_APPROVAL_TRANSCRIPT: approvalTranscriptOverride || hookApprovalTranscript || 'User: Hook を承認。ステップ2 へ進行。',
       }),
     )}`;
     const phase2Output = await runBundlePhaseRequest('phase2', phase2Prompt, PHASE2_BUNDLE_OUTPUTS);
@@ -1115,7 +1115,7 @@ export default function ScenarioCreatePage() {
     }
 
     if (!phasePrompts.phase2 || !phaseOutputs.phase2) {
-      throw new Error('Phase 2 の結果が見つからないため、Phase 2 から再実行してください。');
+      throw new Error('ステップ2 の結果が見つからないため、ステップ2 から再実行してください。');
     }
 
     if (phaseId === 'phase3a') {
@@ -1136,7 +1136,7 @@ export default function ScenarioCreatePage() {
 
     if (phaseId === 'phase3b') {
       if (!phasePrompts.phase3a || !phaseOutputs.phase3a) {
-        throw new Error('Phase 3a の結果が見つからないため、Phase 3a から再実行してください。');
+        throw new Error('ステップ3a の結果が見つからないため、ステップ3a から再実行してください。');
       }
 
       const phase2Prompt = phasePrompts.phase2;
@@ -1156,7 +1156,7 @@ export default function ScenarioCreatePage() {
     }
 
     if (!phasePrompts.phase3a || !phaseOutputs.phase3a || !phasePrompts.phase3b || !phaseOutputs.phase3b) {
-      throw new Error('Phase 4 に必要なレビュー出力が不足しています。');
+      throw new Error('ステップ4 に必要なレビュー出力が不足しています。');
     }
 
     const phase2Prompt = phasePrompts.phase2;
@@ -1172,7 +1172,7 @@ export default function ScenarioCreatePage() {
 
   const runPhase4FromCurrentState = async () => {
     if (!phasePrompts.phase2 || !phaseOutputs.phase2 || !phasePrompts.phase3a || !phaseOutputs.phase3a || !phasePrompts.phase3b || !phaseOutputs.phase3b) {
-      throw new Error('Phase 4 に必要なレビュー出力が不足しています。');
+      throw new Error('ステップ4 に必要なレビュー出力が不足しています。');
     }
 
     markNextPhaseWaiting('phase4');
@@ -1191,7 +1191,7 @@ export default function ScenarioCreatePage() {
     if (!pendingPhase) return;
 
     if (!phasePrompts.phase2 || !phaseOutputs.phase2) {
-      throw new Error('Phase 2 の結果が見つかりません。');
+      throw new Error('ステップ2 の結果が見つかりません。');
     }
 
     if (pendingPhase === 'phase3a') {
@@ -1220,7 +1220,7 @@ export default function ScenarioCreatePage() {
         return;
       }
       if (!phasePrompts.phase3a || !phaseOutputs.phase3a) {
-        throw new Error('Phase 3a の結果が見つかりません。');
+        throw new Error('ステップ3a の結果が見つかりません。');
       }
       await executePhase4({
         phase2Prompt: phasePrompts.phase2,
@@ -1236,7 +1236,7 @@ export default function ScenarioCreatePage() {
 
     if (pendingPhase === 'phase4') {
       if (!phasePrompts.phase3a || !phaseOutputs.phase3a || !phasePrompts.phase3b || !phaseOutputs.phase3b) {
-        throw new Error('Phase 4 に必要なレビュー出力が不足しています。');
+        throw new Error('ステップ4 に必要なレビュー出力が不足しています。');
       }
       await executePhase4({
         phase2Prompt: phasePrompts.phase2,
@@ -1297,7 +1297,7 @@ export default function ScenarioCreatePage() {
   };
 
   const handleApproveHook = () => {
-    const approvalTranscript = 'User: プロローグ（仮）を承認。Phase 2 へ進行。';
+    const approvalTranscript = 'User: プロローグ（仮）を承認。ステップ2 へ進行。';
 
     setHookApproved(true);
     setHookApprovalTranscript(approvalTranscript);
@@ -1473,7 +1473,7 @@ export default function ScenarioCreatePage() {
                 <div className={styles.cardBody}>
                   <div className={styles.sectionHeader}>
                     <div>
-                      <h2 className={styles.sectionTitle}>Phase 4 調整</h2>
+                      <h2 className={styles.sectionTitle}>ステップ4 調整</h2>
                     </div>
                   </div>
                   <label className={styles.fullField}>
@@ -1483,7 +1483,7 @@ export default function ScenarioCreatePage() {
                     {finalScenario ? (
                       <div className={styles.actionsRow} style={{ marginTop: 16, justifyContent: 'flex-end' }}>
                         <button type="button" className={styles.secondaryButton} onClick={() => void withGenerationGuard(runPhase4FromCurrentState)} disabled={isGenerating}>
-                          Phase 4 を再実行
+                          ステップ4 を再実行
                         </button>
                       </div>
                     ) : null}
@@ -1553,21 +1553,13 @@ export default function ScenarioCreatePage() {
               <div className={styles.darkBody}>
                 <div className={styles.sectionHeader}>
                   <div>
-                    <h2 className={styles.sectionTitle}>実行設定</h2>
+                    <h2 className={styles.sectionTitle}>プレイ設定</h2>
                   </div>
                 </div>
 
                 <div className={styles.formGrid}>
                   <label className={styles.field}>
-                    <span className={styles.label}>生成モデル</span>
-                    <select id="generator-model" name="selectedModel" className={styles.select} value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
-                      {MODEL_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className={styles.fullField}>
-                    <span className={styles.label}>Gemini API Key</span>
+                    <span className={styles.label}>Google AI Studio API キー</span>
                     <div className={styles.secretField}>
                       <input id="generator-api-key" name="apiKey" className={styles.input} type={isApiKeyVisible ? 'text' : 'password'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="AIza..." autoComplete="off" />
                       <button type="button" className={styles.smallButton} onClick={() => setIsApiKeyVisible((prev) => !prev)}>
@@ -1576,10 +1568,18 @@ export default function ScenarioCreatePage() {
                     </div>
                   </label>
                   <label className={styles.field}>
-                    <span className={styles.label}>保存方式</span>
+                    <span className={styles.label}>APIキーの保存方法</span>
                     <select id="api-key-storage-mode" name="apiKeyStorageMode" className={styles.select} value={apiKeyStorageMode} onChange={(event) => setApiKeyStorageMode(event.target.value as ApiKeyStorageMode)}>
-                      <option value="session">このタブだけ</option>
-                      <option value="local">この端末に保存</option>
+                      <option value="session">一時保存: ブラウザを閉じると消える</option>
+                      <option value="local">この端末に保存: 次回も自動入力する</option>
+                    </select>
+                  </label>
+                  <label className={styles.field}>
+                    <span className={styles.label}>AIモデル</span>
+                    <select id="generator-model" name="selectedModel" className={styles.select} value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
+                      {MODEL_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                     </select>
                   </label>
                   <div className={styles.fullField}>
@@ -1589,7 +1589,7 @@ export default function ScenarioCreatePage() {
                         一気に最後まで
                       </button>
                       <button type="button" className={`${styles.modeButton} ${executionMode === 'step' ? styles.modeButtonActive : ''}`} onClick={() => setExecutionMode('step')}>
-                        各フェーズで止める
+                        各ステップで止める
                       </button>
                     </div>
                   </div>
@@ -1622,7 +1622,7 @@ export default function ScenarioCreatePage() {
                   {openPhaseSections.phase1 ? (
                     <div className={styles.phaseContent}>
                       <div>
-                        <span className={styles.label}>アイデア</span>
+                        <span className={styles.label}>アイデアを入力</span>
                         <textarea
                           id="generator-idea"
                           name="generatorIdeaText"
@@ -1660,7 +1660,7 @@ export default function ScenarioCreatePage() {
 
                       <div className={`${styles.actionsRow} ${styles.centeredActions}`}>
                         <button type="button" className={styles.primaryButton} onClick={handleStartGeneration} disabled={!canStartPhase1 || isGenerating || isPromptLoading || Boolean(hookPreview)}>
-                          {hookPreview ? 'Phase 1 生成済み' : isPhase1Generating ? '生成中...' : 'プロローグ（仮）を生成'}
+                          {hookPreview ? 'ステップ1 生成済み' : isPhase1Generating ? '生成中...' : 'プロローグ（仮）を生成'}
                         </button>
                         {isPhase1Generating ? (
                           <button type="button" className={styles.dangerButton} onClick={handleStopGeneration}>
@@ -1706,7 +1706,7 @@ export default function ScenarioCreatePage() {
                           ) : null}
                           <div className={styles.actionsRow} style={{ marginTop: 16 }}>
                             <button type="button" className={styles.secondaryButton} onClick={() => void withGenerationGuard(runPhase1)} disabled={isGenerating}>
-                              Phase 1 を再生成
+                              ステップ1 を再生成
                             </button>
                             <button type="button" className={styles.primaryButton} onClick={handleApproveHook} disabled={isGenerating || hookApproved}>
                               {hookApproved ? '承認済み' : 'この内容で続行'}
