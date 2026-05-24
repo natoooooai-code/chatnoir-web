@@ -468,11 +468,12 @@ const fetchWithRetry = async <T>(fn: () => Promise<T>, abortSignal?: AbortSignal
 };
 
 const createChatGenerator = (ai: GoogleGenAI, requestedModel: string, fallbackEnabled: boolean, abortSignal?: AbortSignal, maxRetries = 3) => {
-  const normalizedRequestedModel = FALLBACK_CHAIN.includes(requestedModel) ? requestedModel : DEFAULT_MODEL;
+  const normalizedRequestedModel = requestedModel || DEFAULT_MODEL;
   const getModelsToTry = (selected: string, enableFallback: boolean): string[] => {
     if (!enableFallback) return [selected];
+
     const index = FALLBACK_CHAIN.indexOf(selected);
-    if (index === -1) return [DEFAULT_MODEL, ...FALLBACK_CHAIN.filter((model) => model !== DEFAULT_MODEL)];
+    if (index === -1) return [selected, ...FALLBACK_CHAIN.filter((model) => model !== selected)];
     return [...FALLBACK_CHAIN.slice(index), ...FALLBACK_CHAIN.slice(0, index)];
   };
 
