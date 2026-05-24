@@ -374,3 +374,23 @@
   color: var(--bg-color);
   transform: scale(1.1);
 }
+
+.saveGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  width: 100%;
+  align-items: stretch;
+}
+
+@media (max-width: 1120px) {
+  .saveGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .saveGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

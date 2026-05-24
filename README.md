@@ -1,48 +1,40 @@
 # ChatNoir Web
 
-ChatNoir Web is a static Next.js application for playing and testing AI-driven mystery scenarios in the browser.
+ChatNoir Webは、ブラウザ上でプレイできるテキスト対話型マーダーミステリーのプラットフォームです。
 
-## Overview
+## 概要
 
-- Built with Next.js static export for GitHub Pages deployment.
-- Uses the Gemini client SDK directly in the browser.
-- The user provides their own API key; no server-side key storage is required.
-- Includes a sample scenario and support assistant flow for local or static hosting use.
+このゲームは、単に「用意された選択肢のボタンを選んでクリックする」ゲームではありません。プレイヤーはチャット入力欄から、「〇〇を調べる」「〇〇に話しかける」といった自由なセリフや行動をテキストで入力し、それに対してゲームマスター（AI）が結果をテキストで返すという、TRPGのような自由度の高いプレイスタイルを採用しています。
 
-## Requirements
+## 主な特徴
 
-- Node.js 20 or later
+- **自由なテキスト入力**: プレイヤー自身の言葉で自由に行動を宣言し、謎を解き明かします。
+- **AIゲームマスター**: Gemini APIを利用したAIが、プレイヤーの入力に対して柔軟かつ適切な反応を返し、物語を進行させます。
+- **ブラウザで完結**: サーバー側のインフラを必要とせず、手元のAPIキーを使って手軽にプレイ可能です（APIキーはブラウザ上でのみ保持されます）。
+
+## 開発・起動方法
+
+このプロジェクトは Next.js (Static Export) で構築されています。
+
+### 動作環境
+- Node.js 20 以上
 - npm
-- A Gemini API key for actual play
+- Gemini APIキー (プレイ時にブラウザ上で入力します)
 
-## Local Development
+### ローカルでの実行手順
 
-Install dependencies:
+1. 依存関係のインストール:
+   ```bash
+   npm ci
+   ```
+2. 開発サーバーの起動:
+   ```bash
+   npm run dev
+   ```
+3. ブラウザで `http://localhost:3000` にアクセスします。
 
-```bash
-npm ci
-```
-
-Start the development server:
-
-```bash
-npm run dev
-```
-
-Open http://localhost:3000 in your browser.
-
-## Build
-
-Create a static export:
-
+### ビルド
+静的ファイルを生成する場合は以下のコマンドを実行します。生成されたファイルは `out` ディレクトリに出力されます。
 ```bash
 npm run build
 ```
-
-The generated static site is written to the out directory.
-
-## Notes
-
-- This app is designed for static hosting.
-- API keys are handled client-side in the browser.
-- Files under public are shipped as public assets when deployed.

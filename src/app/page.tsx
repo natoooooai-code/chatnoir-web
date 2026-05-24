@@ -3992,7 +3992,7 @@ ${currentMapJson}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem', width: '100%' }}>
+            <div className={styles.saveGrid}>
               {visibleAutoSaves.map((meta) => {
                 const isPinned = pinnedSaveKeys.includes(meta.key);
                 const scenarioDisplayTitle = meta.scenarioTitle?.trim() || '名称未設定';
