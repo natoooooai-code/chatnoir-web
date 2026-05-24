@@ -19,7 +19,7 @@ import {
   type GraphMapState,
   type MapCurrentPos,
 } from '@/lib/mapGraph';
-import { consumePendingGeneratedScenario } from '@/lib/scenarioGeneration';
+import { GENERATED_SCENARIO_PAYLOAD_KEY, consumePendingGeneratedScenario } from '@/lib/scenarioGeneration';
 import styles from './page.module.css';
 
 type AppAlertState = {
@@ -73,6 +73,18 @@ const SCENARIO_DEBUG_PROMPT = [
 ].join('\n');
 const SUPPORT_HISTORY_MAX_MESSAGES = 18;
 const SUPPORT_HISTORY_MAX_CHARS = 12000;
+const GOOGLE_AI_STUDIO_API_KEYS_URL = 'https://aistudio.google.com/app/api-keys';
+const GOOGLE_AI_STUDIO_RATE_LIMITS_URL = 'https://aistudio.google.com/u/8/rate-limit?timeRange=last-1-day';
+const RUNTIME_MODEL_OPTIONS = [
+  { value: 'gemma-4-31b-it', label: 'Gemma 4 31B（推奨）', compactLabel: 'Gemma 4 31B' },
+  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite（軽量）', compactLabel: 'Gemini 3.1 Flash-Lite' },
+] as const;
+const DEFAULT_RUNTIME_MODEL: string = RUNTIME_MODEL_OPTIONS[0].value;
+const normalizeRuntimeModel = (value: unknown): string => (
+  typeof value === 'string' && RUNTIME_MODEL_OPTIONS.some((option) => option.value === value)
+    ? value
+    : DEFAULT_RUNTIME_MODEL
+);
 
 const resolveRuntimeBasePath = (): string => {
   if (BUILD_TIME_BASE_PATH) {
@@ -414,6 +426,7 @@ interface StoredGameState {
   supportStorySnapshots?: SupportStorySnapshot[];
   supportSuggestions?: string[];
   supportInputText?: string;
+  selectedModel?: string;
   fallbackEnabled?: boolean;
   isSupportSidebarOpen?: boolean;
   isSupportModalOpen?: boolean;
@@ -721,6 +734,7 @@ const normalizeStoredGameState = (value: unknown): StoredGameState => {
     supportStorySnapshots: toSupportStorySnapshots(record.supportStorySnapshots),
     supportSuggestions: toStringArray(record.supportSuggestions),
     supportInputText: getString(record.supportInputText),
+    selectedModel: normalizeRuntimeModel(record.selectedModel),
     fallbackEnabled: typeof record.fallbackEnabled === 'boolean' ? record.fallbackEnabled : undefined,
     isSupportSidebarOpen: record.isSupportSidebarOpen === true,
     isSupportModalOpen: record.isSupportModalOpen === true,
@@ -1174,9 +1188,11 @@ export default function ChatNoir() {
   const [appPrompt, setAppPrompt] = useState<AppPromptState | null>(null);
   const [autoSaves, setAutoSaves] = useState<AutoSaveMeta[]>([]);
   const [masterScenarios, setMasterScenarios] = useState<ScenarioMasterData[]>([]);
+  const selectedMasterScenario = masterScenarios.find((scenario) => scenario.title === scenarioTitle);
   const confirmResolverRef = useRef<((value: boolean) => void) | null>(null);
   const promptResolverRef = useRef<((value: string | null) => void) | null>(null);
   const promptInputRef = useRef<HTMLInputElement>(null);
+  const waitingRoomCoverInputRef = useRef<HTMLInputElement>(null);
 
   // 起動時に保存データを取得
   useEffect(() => {
@@ -1185,7 +1201,7 @@ export default function ChatNoir() {
   }, []);
 
   // 選択されたモデル・フォールバック設定
-  const [selectedModel, setSelectedModel] = useState('gemma-4-31b-it');
+  const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_RUNTIME_MODEL);
   const [fallbackEnabled, setFallbackEnabled] = useState(true);
 
   // サイドバーの開閉状態
@@ -1628,6 +1644,8 @@ export default function ChatNoir() {
     setSupportMessagesState([]);
     setSupportStorySnapshotsState([]);
     setSupportSuggestions([]);
+    setSelectedModel(DEFAULT_RUNTIME_MODEL);
+    setFallbackEnabled(true);
     isScenarioDebugModeRef.current = false;
     scenarioDebugSessionRef.current += 1;
     debugAutomatedMessageRef.current = false;
@@ -1708,6 +1726,8 @@ export default function ChatNoir() {
     if (!pendingScenario) return;
 
     resetAllState();
+    setSelectedModel(normalizeRuntimeModel(pendingScenario.selectedModel));
+    setFallbackEnabled(pendingScenario.fallbackEnabled !== undefined ? pendingScenario.fallbackEnabled : true);
     setScenarioTitle(pendingScenario.scenarioTitle || pendingScenario.scenarioMeta.title || 'Generated Scenario');
     setScenarioText(pendingScenario.scenarioText);
     setBriefingText(pendingScenario.briefingText);
@@ -1866,6 +1886,7 @@ export default function ChatNoir() {
     setSupportSuggestions(parsed.supportSuggestions || []);
     const supportInputText = parsed.supportInputText;
     if (supportInputText) setTimeout(() => supportInputRef.current?.setValue(supportInputText), 0);
+    setSelectedModel(normalizeRuntimeModel(parsed.selectedModel));
     if (parsed.fallbackEnabled !== undefined) setFallbackEnabled(parsed.fallbackEnabled);
     setIsSupportSidebarOpen(shouldOpenSupportSidebar);
     setIsSupportModalOpen(shouldOpenSupportModal);
@@ -1943,6 +1964,14 @@ export default function ChatNoir() {
     const runStartupInfo = async () => {
       await scrubApiKeysFromIDB();
 
+      const hasPendingGeneratedScenario = Boolean(sessionStorage.getItem(GENERATED_SCENARIO_PAYLOAD_KEY));
+      if (hasPendingGeneratedScenario) {
+        sessionStorage.removeItem('chatnoir-current-save-key');
+        sessionStorage.removeItem('chatnoir-current-gameState');
+        setIsLoaded(true);
+        return;
+      }
+
       // sessionStorageから前回の状態を読み込む（リロード用）
       const currentKey = sessionStorage.getItem('chatnoir-current-save-key');
       const isReload = !!currentKey;
@@ -1992,7 +2021,7 @@ export default function ChatNoir() {
       const currentData = {
         gameState, openingFlowStage, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage,
         charactersData, factsData, mysteriesData, monologueData, playerMemo, openSections, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen,
-        mapLayers, currentPos, fallbackEnabled,
+        mapLayers, currentPos, selectedModel, fallbackEnabled,
         lastPlay
       };
 
@@ -2005,7 +2034,7 @@ export default function ChatNoir() {
       sessionStorage.setItem('chatnoir-current-save-key', runKey);
       saveToIDB(runKey, currentData);
     }
-  }, [isLoaded, gameState, openingFlowStage, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, openSections, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen, mapLayers, currentPos, fallbackEnabled]);
+  }, [isLoaded, gameState, openingFlowStage, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey, charactersData, factsData, mysteriesData, monologueData, playerMemo, openSections, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen, mapLayers, currentPos, selectedModel, fallbackEnabled]);
 
   const flushMapSnapshotEffect = useEffectEvent(() => {
     if (!isLoaded || gameState === 'WELCOME' || gameState === 'SAVES' || gameState === 'LOGIN') {
@@ -2061,6 +2090,24 @@ export default function ChatNoir() {
       }
     }
   };
+
+  const resetPrologueViewport = () => {
+    const apply = () => {
+      window.scrollTo(0, 0);
+      scrollToTop();
+    };
+
+    apply();
+    window.requestAnimationFrame(() => {
+      apply();
+      window.setTimeout(apply, 120);
+      window.setTimeout(apply, 360);
+    });
+  };
+
+  const resetPrologueViewportEffect = useEffectEvent(() => {
+    resetPrologueViewport();
+  });
 
   const scrollSupportToBottom = () => {
     if (supportScrollRef.current) {
@@ -2120,13 +2167,32 @@ export default function ChatNoir() {
   // スクロール処理（自動スクロールを停止し、プレイヤーが自分のペースで読めるようにする）
   useEffect(() => {
     // 初回ロード時のみ、最新メッセージまでスクロールする
-    if (isLoaded && gameState === 'PLAYING' && !isInitialScrollDone.current && messages.length > 0) {
+    if (isLoaded && gameState === 'PLAYING' && openingFlowStage !== 'PROLOGUE' && !isInitialScrollDone.current && messages.length > 0) {
       setTimeout(() => {
         scrollToBottomEffect();
         isInitialScrollDone.current = true;
       }, 500); // レンダリング完了まで余裕を持つ
     }
-  }, [isLoaded, gameState, messages.length]);
+  }, [isLoaded, gameState, openingFlowStage, messages.length]);
+
+  useEffect(() => {
+    if (!(isLoaded && gameState === 'PLAYING' && openingFlowStage === 'PROLOGUE' && messages.length > 0)) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      resetPrologueViewportEffect();
+    });
+    const timeoutIds = [
+      window.setTimeout(() => resetPrologueViewportEffect(), 180),
+      window.setTimeout(() => resetPrologueViewportEffect(), 520),
+    ];
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, [isLoaded, gameState, openingFlowStage, messages.length]);
 
   useEffect(() => {
     if (!supportScrollTarget) return;
@@ -2287,7 +2353,7 @@ export default function ChatNoir() {
       return;
     }
     if (!saveName.trim()) {
-      showAppAlert("プロジェクト名を入力してください");
+      showAppAlert("セーブ名を入力してください");
       return;
     }
     persistApiKey(apiKey, apiKeyStorageMode);
@@ -2327,6 +2393,51 @@ export default function ChatNoir() {
     startInitialChat();
   };
 
+  const persistCurrentScenarioMasterCover = async (nextCoverImage: string) => {
+    const normalizedTitle = scenarioTitle.trim();
+
+    if (!normalizedTitle || !selectedMasterScenario) {
+      return false;
+    }
+
+    await saveScenarioMaster(normalizedTitle, {
+      gmRuleText: selectedMasterScenario?.gmRuleText || gmRuleText,
+      scenarioText: selectedMasterScenario?.scenarioText || scenarioText,
+      briefingText: selectedMasterScenario?.briefingText || briefingText,
+      prologueText: selectedMasterScenario?.prologueText || prologueText,
+      mapFileText: selectedMasterScenario?.mapFileText || mapFileText,
+      mapLayers: selectedMasterScenario?.mapLayers || mapLayers,
+      currentPos: selectedMasterScenario?.currentPos || currentPos,
+      coverImage: nextCoverImage,
+      scenarioMeta: Object.keys(selectedMasterScenario?.scenarioMeta || {}).length > 0 ? selectedMasterScenario?.scenarioMeta : scenarioMeta,
+      lastUpdated: new Date().toISOString()
+    });
+    getAllScenarioMasters().then(setMasterScenarios);
+    return true;
+  };
+
+  const handleWaitingRoomCoverChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const nextCoverImage = typeof reader.result === 'string' ? reader.result : '';
+      setCoverImage(nextCoverImage);
+      void persistCurrentScenarioMasterCover(nextCoverImage).then((didPersist) => {
+        if (didPersist) {
+          showToast('カバー画像を差し替えました');
+        }
+      });
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  const openWaitingRoomCoverPicker = () => {
+    waitingRoomCoverInputRef.current?.click();
+  };
+
   // 新規ゲーム開始時にプロローグだけ表示する
   const startInitialChat = (prologueOverride?: string) => {
     setGameState('PLAYING');
@@ -2335,16 +2446,8 @@ export default function ChatNoir() {
     // 初回起動時の強制一番下スクロール（useEffect）が誤ってはたらくのを防ぐフラグ
     isInitialScrollDone.current = true;
 
-    // ページの先頭にスクロールをリセット（DOM更新後に行うためsetTimeout）
-    setTimeout(() => {
-      window.scrollTo(0, 0);
-      if (scrollRef.current) {
-        scrollRef.current.scrollTop = 0;
-        scrollRef.current.scrollLeft = 0;
-      }
-    }, 200);
-
     setMessages(buildInitialPrologueHistory(prologueOverride));
+    resetPrologueViewport();
     // この時点ではAIへの通信は行わない。プレイヤーがプロローグを読み終えるのを待つ。
   };
 
@@ -3758,7 +3861,7 @@ ${currentMapJson}
                 ファイルからロード
               </button>
               <button onClick={() => setShowLibrarySettings((prev) => !prev)} style={{ background: showLibrarySettings ? '#262626' : '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px' }}>
-                {showLibrarySettings ? '設定を閉じる' : '設定'}
+                {showLibrarySettings ? '設定を閉じる' : 'AIの設定'}
               </button>
               <button onClick={() => { setShowLibrarySettings(false); setGameState('WELCOME'); }} style={{ background: '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', transition: 'all 0.2s' }}>
                 トップ画面へ戻る
@@ -3787,7 +3890,7 @@ ${currentMapJson}
                     style={{ width: '100%', padding: '0.85rem 0.95rem', background: '#0d0d0d', color: '#f5f5f5', border: '1px solid #2f2f2f', borderRadius: '6px', fontFamily: 'inherit' }}
                   />
                   <a
-                    href="https://aistudio.google.com/app/api-keys"
+                    href={GOOGLE_AI_STUDIO_API_KEYS_URL}
                     target="_blank"
                     rel="noreferrer"
                     style={{ color: '#9fb6ff', fontSize: '0.72rem', lineHeight: 1.7, textDecoration: 'underline', textUnderlineOffset: '3px' }}
@@ -3824,10 +3927,17 @@ ${currentMapJson}
                     onChange={(e) => setSelectedModel(e.target.value)}
                     style={{ width: '100%', padding: '0.85rem 0.95rem', background: '#0d0d0d', color: '#f5f5f5', border: '1px solid #2f2f2f', borderRadius: '6px', fontFamily: 'inherit' }}
                   >
-                    <option value="gemma-4-31b-it">Gemma 4 31B（推奨）</option>
-                    <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
-                    <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite（軽量・安定）</option>
+                    {RUNTIME_MODEL_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
+                  <p style={{ margin: 0, fontSize: '0.72rem', color: '#8f8f8f', lineHeight: 1.7 }}>
+                    モデルごとに利用制限が異なります。{' '}
+                    <a href={GOOGLE_AI_STUDIO_RATE_LIMITS_URL} target="_blank" rel="noreferrer" style={{ color: '#9fb6ff', textDecoration: 'underline', textUnderlineOffset: '3px' }}>
+                      Gemini API のレート制限
+                    </a>
+                    を参照してください。
+                  </p>
                 </div>
               </div>
 
@@ -4011,12 +4121,24 @@ ${currentMapJson}
               待機室へ戻る
             </button>
           </div>
-          <div style={{ width: '100%', marginBottom: '1.5rem', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: '100%', marginBottom: '1rem', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {coverImage ? (
               <img src={resolvePublicAssetPath(coverImage)} alt="Cover" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'cover', display: 'block' }} />
             ) : (
               <img src={resolvePublicAssetPath(APP_LOGO_PATH)} alt="Chat;Noir" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'contain', display: 'block', padding: '2rem' }} />
             )}
+          </div>
+          <div style={{ marginBottom: '1.75rem', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={openWaitingRoomCoverPicker}
+                style={{ background: '#1f1f1f', color: '#f5f5f5', border: '1px solid #3a3a3a', padding: '0.72rem 1rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.78rem', letterSpacing: '0.6px', fontWeight: 700 }}
+              >
+                {coverImage ? 'カバー画像を差し替える' : 'カバー画像を設定する'}
+              </button>
+              <input ref={waitingRoomCoverInputRef} type="file" accept="image/*" onChange={handleWaitingRoomCoverChange} style={{ display: 'none' }} />
+            </div>
           </div>
 
           {/* シナリオライブラリ（保存済みマスターデータ + サンプル） */}
@@ -4102,7 +4224,7 @@ ${currentMapJson}
 
           <div className={styles.inputWrapper}>
             <div style={{ marginTop: '1rem' }}>
-              <label htmlFor="save-name" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>プロジェクト名（必須）</label>
+              <label htmlFor="save-name" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', display: 'block', letterSpacing: '1px' }}>セーブ名（必須）</label>
               <input
                 id="save-name"
                 type="text"
@@ -4173,15 +4295,7 @@ ${currentMapJson}
                 <IconImage /> パッケージ画像（任意）
                 {coverImage && <span style={{ color: '#10b981', marginLeft: '8px', fontSize: '0.7rem' }}>✓ 準備完了</span>}
               </p>
-              <FileUploadTrigger accept="image/*" inputName="coverImageFile" onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = (evt) => setCoverImage(evt.target?.result as string);
-                  reader.readAsDataURL(file);
-                }
-                e.target.value = '';
-              }} helperText={coverImage ? '再選択すると上書きします。' : undefined} />
+              <FileUploadTrigger accept="image/*" inputName="coverImageFile" buttonLabel="ファイルを選ぶ" onChange={handleWaitingRoomCoverChange} />
             </div>
 
             <div style={{ textAlign: 'left', background: 'transparent', padding: '1rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
@@ -4632,7 +4746,7 @@ ${currentMapJson}
                   ⚙
                 </button>
                 {showSettings && (
-                  <div style={{ position: 'absolute', bottom: '100%', left: '0', marginBottom: '8px', background: 'var(--sidebar-bg)', border: `1px solid var(--border-color)`, padding: '1rem', borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '0.8rem', zIndex: 200, minWidth: '220px', boxShadow: '0 -4px 10px rgba(0,0,0,0.1)' }}>
+                  <div style={{ position: 'absolute', bottom: '100%', left: '0', marginBottom: '8px', background: 'var(--sidebar-bg)', border: `1px solid var(--border-color)`, padding: '1rem', borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '0.8rem', zIndex: 200, minWidth: '220px', maxWidth: '320px', maxHeight: 'min(70vh, 560px)', overflowY: 'auto', boxShadow: '0 -4px 10px rgba(0,0,0,0.1)' }}>
                     <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-main)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>設定</p>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '4px 0' }}>
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-main)' }}>ダークモード</span>
@@ -4692,10 +4806,17 @@ ${currentMapJson}
                     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>AIモデル</p>
                       <select name="runtimeModel" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
-                        <option value="gemma-4-31b-it">Gemma 4 31B</option>
-                        <option value="gemma-4-26b-a4b-it">Gemma 4 26B</option>
-                        <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
+                        {RUNTIME_MODEL_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.compactLabel}</option>
+                        ))}
                       </select>
+                      <p style={{ margin: 0, fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                        制限は{' '}
+                        <a href={GOOGLE_AI_STUDIO_RATE_LIMITS_URL} target="_blank" rel="noreferrer" style={{ color: '#9fb6ff', textDecoration: 'underline', textUnderlineOffset: '3px' }}>
+                          Gemini API のレート制限
+                        </a>
+                        を参照。
+                      </p>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-main)' }}>フォールバック</span>
                         <div onClick={() => setFallbackEnabled(!fallbackEnabled)} style={{ width: '36px', height: '18px', background: fallbackEnabled ? '#4a7c59' : 'var(--border-color)', borderRadius: '18px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s' }}>

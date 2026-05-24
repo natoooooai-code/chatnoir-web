@@ -58,6 +58,12 @@ type AppConfirmState = {
   danger?: boolean;
 };
 
+type PlayStartOptionsState = {
+  projectName: string;
+  selectedModel: string;
+  fallbackEnabled: boolean;
+};
+
 type ScenarioCreateDraft = {
   selectedModel: string;
   executionMode: ExecutionMode;
@@ -97,10 +103,26 @@ const API_KEY_STORAGE_MODE_KEY = 'chatnoir_apiKeyStorageMode';
 const CREATE_DRAFT_STORAGE_KEY = 'chatnoir_scenarioCreateDraft_v1';
 const PHASE_ORDER: GenerationPhaseId[] = ['phase1', 'phase2', 'phase3a', 'phase3b', 'phase4'];
 const MODEL_OPTIONS = [
-  { value: 'gemma-4-31b-it', label: 'Gemma 4 31B（推奨）' },
+  { value: 'gemma-4-31b-it', label: 'Gemma 4 31B' },
   { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite（軽量・安定）' },
+  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
 ] as const;
+const PLAY_MODEL_OPTIONS = [
+  { value: 'gemma-4-31b-it', label: 'Gemma 4 31B' },
+  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
+] as const;
+const DEFAULT_MODEL: string = MODEL_OPTIONS[0].value;
+const normalizeSelectedModel = (value: unknown): string => (
+  typeof value === 'string' && MODEL_OPTIONS.some((option) => option.value === value)
+    ? value
+    : DEFAULT_MODEL
+);
+const DEFAULT_PLAY_MODEL: string = PLAY_MODEL_OPTIONS[0].value;
+const normalizePlaySelectedModel = (value: unknown): string => (
+  typeof value === 'string' && PLAY_MODEL_OPTIONS.some((option) => option.value === value)
+    ? value
+    : DEFAULT_PLAY_MODEL
+);
 const PROMPT_PATHS: Record<GenerationPhaseId, string> = {
   phase1: 'scenario-generation-prompts/01_concept_design_app.md',
   phase2: 'scenario-generation-prompts/02_scenario_build_app.md',
@@ -109,11 +131,11 @@ const PROMPT_PATHS: Record<GenerationPhaseId, string> = {
   phase4: 'scenario-generation-prompts/04_scenario_revision_app.md',
 };
 const PHASE_DEFINITIONS: PhaseCardDefinition[] = [
-  { id: 'phase1', label: 'ステップ1 アイデアを入力 / プロローグ（仮）' },
-  { id: 'phase2', label: 'ステップ2 シナリオ構築' },
-  { id: 'phase3a', label: 'ステップ3a エンタメチェック' },
-  { id: 'phase3b', label: 'ステップ3b ロジックチェック' },
-  { id: 'phase4', label: 'ステップ4 最終修正' },
+  { id: 'phase1', label: 'ステップ1：コンセプト＆プロローグ（仮）設計' },
+  { id: 'phase2', label: 'ステップ2：シナリオ構築' },
+  { id: 'phase3a', label: 'ステップ3a：エンタメチェック' },
+  { id: 'phase3b', label: 'ステップ3b：ロジックチェック' },
+  { id: 'phase4', label: 'ステップ4：調整・最終修正' },
 ];
 const GENERATION_SYSTEM_INSTRUCTION = 'あなたはシナリオ生成専用アシスタントです。これはゲーム本編進行ではありません。scene_blocks 形式の JSON、位置や時刻のステータス行、📍 や 🕐 の記号付き行、ゲームマスターとしての進行文は禁止です。与えられたプロンプトの出力フォーマットに厳密に従い、通常の Markdown / JSON コードブロックだけを返してください。';
 const PHASE_OUTPUT_WRAPPERS: Record<GenerationPhaseId, string> = {
@@ -423,6 +445,8 @@ const dataUrlToBlob = async (dataUrl: string): Promise<Blob> => {
 };
 
 const STEM_SYSTEM_INSTRUCTION = 'You convert scenario titles into lowercase ASCII file slugs. Return only the slug. Use romaji for Japanese titles. Allowed characters are a-z, 0-9, and hyphen.';
+const GOOGLE_AI_STUDIO_API_KEYS_URL = 'https://aistudio.google.com/app/api-keys';
+const GOOGLE_AI_STUDIO_RATE_LIMITS_URL = 'https://aistudio.google.com/u/8/rate-limit?timeRange=last-1-day';
 
 const FileUploadTrigger = ({
   accept,
@@ -472,7 +496,7 @@ export default function ScenarioCreatePage() {
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false);
   const [apiKeyStorageMode, setApiKeyStorageMode] = useState<ApiKeyStorageMode>('session');
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('auto');
-  const [selectedModel, setSelectedModel] = useState('gemma-4-31b-it');
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const fallbackEnabled = false;
   const generationRequestMaxRetries = 3;
   const [generatorIdeaText, setGeneratorIdeaText] = useState('');
@@ -498,6 +522,8 @@ export default function ScenarioCreatePage() {
   const [scenarioTitleHint, setScenarioTitleHint] = useState('');
   const [scenarioFileStem, setScenarioFileStem] = useState('scenario');
   const [finalScenario, setFinalScenario] = useState<ParsedFinalScenario | null>(null);
+  const [isCoverPromptCopied, setIsCoverPromptCopied] = useState(false);
+  const [playStartOptions, setPlayStartOptions] = useState<PlayStartOptionsState | null>(null);
 
   const [appConfirm, setAppConfirm] = useState<AppConfirmState | null>(null);
   const confirmResolverRef = useRef<((value: boolean) => void) | null>(null);
@@ -557,7 +583,7 @@ export default function ScenarioCreatePage() {
     }
 
     const { statuses, hadRunning } = normalizePhaseStatuses(draft.phaseStatuses);
-    setSelectedModel(typeof draft.selectedModel === 'string' ? draft.selectedModel : 'gemma-4-31b-it');
+    setSelectedModel(normalizeSelectedModel(draft.selectedModel));
     setExecutionMode(draft.executionMode === 'step' ? 'step' : 'auto');
     setGeneratorIdeaText(typeof draft.generatorIdeaText === 'string' ? draft.generatorIdeaText : '');
     setCoverImage(typeof draft.coverImage === 'string' ? draft.coverImage : '');
@@ -727,7 +753,7 @@ export default function ScenarioCreatePage() {
     uploadedMediaCacheRef.current = { key: '', parts: [] };
     activePhaseRef.current = 'phase1';
     stemCacheRef.current = {};
-    setSelectedModel('gemma-4-31b-it');
+    setSelectedModel(DEFAULT_MODEL);
     setExecutionMode('auto');
     setGeneratorIdeaText('');
     setAttachments([]);
@@ -966,20 +992,28 @@ export default function ScenarioCreatePage() {
     activePhaseRef.current = phaseId;
     updateStatus(phaseId, 'running');
 
-    const prompts = outputs.map((output) => `${basePrompt}\n\n${output.promptInstruction}`);
-    const combinedPrompt = prompts
-      .map((prompt, index) => `### 出力${index + 1}用プロンプト：${outputs[index].heading}\n\n${prompt}`)
-      .join('\n\n');
+    const combinedPrompt = [
+      basePrompt,
+      '',
+      '【今回の出力方法】以下の複数ファイルを、1回の応答にまとめて出力してください。',
+      '各ファイルは指定順で並べ、アプリが分割できるように指定の見出しを必ず付けてください。',
+      '',
+      ...outputs.map((output, index) => [
+        `### 出力仕様${index + 1}：${output.heading}`,
+        output.promptInstruction,
+      ].join('\n')),
+      '',
+      '【最終出力ルール】',
+      ...outputs.map((output, index) => `- 各出力は必ず「### 出力${index + 1}：${output.heading}」の見出しで開始すること。`),
+      '- 指定順を崩さないこと。',
+      '- 各見出しの下には、そのファイル本文だけを置くこと。',
+      '- 上記の見出し以外の前置き、後置き、補足、総括は禁止。',
+    ].join('\n\n');
 
     setPhasePrompts((prev) => ({ ...prev, [phaseId]: combinedPrompt }));
 
-    const chunks: string[] = [];
-    for (const [index, output] of outputs.entries()) {
-      const markdown = await requestPhaseMarkdown(phaseId, prompts[index], `${createArtifactLabel(phaseId)}: ${output.requestLabel}`);
-      chunks.push(`### 出力${index + 1}：${output.heading}\n\n${markdown}`);
-    }
-
-    return await finalizePhaseOutput(phaseId, combinedPrompt, chunks.join('\n\n'));
+    const markdown = await requestPhaseMarkdown(phaseId, combinedPrompt, createArtifactLabel(phaseId));
+    return await finalizePhaseOutput(phaseId, combinedPrompt, markdown);
   };
 
   const runModelRequest = async (phaseId: GenerationPhaseId, promptText: string, extraParts: GeminiChatMessagePart[] = []) => {
@@ -1363,17 +1397,49 @@ export default function ScenarioCreatePage() {
     event.target.value = '';
   };
 
+  const handleCoverRemove = () => {
+    setCoverImage('');
+  };
+
+  const handleCopyCoverPrompt = async () => {
+    if (!coverImagePromptExample) return;
+
+    try {
+      await navigator.clipboard.writeText(coverImagePromptExample);
+      setIsCoverPromptCopied(true);
+      window.setTimeout(() => {
+        setIsCoverPromptCopied(false);
+      }, 2000);
+    } catch {
+      // ignore clipboard failures
+    }
+  };
+
   const handlePlayGeneratedScenario = () => {
     if (!finalScenario) return;
 
+    setPlayStartOptions({
+      projectName: '',
+      selectedModel: normalizePlaySelectedModel(selectedModel),
+      fallbackEnabled: true,
+    });
+  };
+
+  const handleConfirmPlayGeneratedScenario = () => {
+    if (!finalScenario || !playStartOptions) return;
+    const normalizedProjectName = playStartOptions.projectName.trim();
+    if (!normalizedProjectName) return;
+
     const payload: PendingGeneratedScenarioPayload = {
       scenarioTitle: finalScenario.title,
-      saveName: finalScenario.title,
+      saveName: normalizedProjectName,
       scenarioText: finalScenario.scenarioText,
       briefingText: finalScenario.briefingText,
       prologueText: finalScenario.prologueText,
       mapFileText: finalScenario.mapFileText,
       coverImage,
+      selectedModel: normalizePlaySelectedModel(playStartOptions.selectedModel),
+      fallbackEnabled: playStartOptions.fallbackEnabled,
       scenarioMeta: {
         title: finalScenario.title,
         protagonistName: finalScenario.scenarioMeta.protagonistName,
@@ -1382,7 +1448,8 @@ export default function ScenarioCreatePage() {
     };
 
     storePendingGeneratedScenario(payload);
-    router.push('/');
+    setPlayStartOptions(null);
+    router.push('/', { scroll: true });
   };
 
   const handleDownloadZip = async () => {
@@ -1435,6 +1502,9 @@ export default function ScenarioCreatePage() {
         { title: 'メタデータ', fileName: `${scenarioFileStem}_metadata.json`, text: finalScenario.metadataJsonText, mimeType: 'application/json;charset=utf-8' },
       ]
     : [];
+  const coverImagePromptExample = finalScenario
+    ? `この物語のキービジュアルを生成してください。タイトルは「${finalScenario.title}」です。タイトル以外のテキストは画像に含めないでください。`
+    : '';
 
   const syncScenarioFileStem = useEffectEvent((title: string) => {
     void resolveTitleStem(title);
@@ -1455,6 +1525,9 @@ export default function ScenarioCreatePage() {
               <h1 className={styles.title}>物語を作る</h1>
               <span className={styles.betaBadge}>BETA</span>
             </div>
+            <p className={styles.helperText} style={{ margin: 0 }}>
+              テキスト・画像・音声・動画のアイデアからオリジナルのシナリオを作成。すぐに遊べます。
+            </p>
           </div>
           <div className={styles.headerActions}>
             <button type="button" className={styles.dangerButton} onClick={handleResetDraft} disabled={isGenerating}>
@@ -1468,29 +1541,6 @@ export default function ScenarioCreatePage() {
 
         <div className={styles.grid}>
           <main className={styles.mainColumn}>
-            {executionMode === 'step' && phaseOutputs.phase3b ? (
-              <section className={styles.card}>
-                <div className={styles.cardBody}>
-                  <div className={styles.sectionHeader}>
-                    <div>
-                      <h2 className={styles.sectionTitle}>ステップ4 調整</h2>
-                    </div>
-                  </div>
-                  <label className={styles.fullField}>
-                    <span className={styles.label}>レビュー後の追加修正要望</span>
-                    <textarea id="revision-request" name="revisionRequest" className={styles.textarea} value={revisionRequest} onChange={(event) => setRevisionRequest(event.target.value)} placeholder="例: ヒロインの動機をもう少し切実に。中盤の会話イベントを増やし、終盤の反転は感情寄りにしたい。" />
-                  </label>
-                    {finalScenario ? (
-                      <div className={styles.actionsRow} style={{ marginTop: 16, justifyContent: 'flex-end' }}>
-                        <button type="button" className={styles.secondaryButton} onClick={() => void withGenerationGuard(runPhase4FromCurrentState)} disabled={isGenerating}>
-                          ステップ4 を再実行
-                        </button>
-                      </div>
-                    ) : null}
-                </div>
-              </section>
-            ) : null}
-
             {finalScenario ? (
               <section className={styles.finalCard}>
                 <div className={styles.finalBody}>
@@ -1530,8 +1580,30 @@ export default function ScenarioCreatePage() {
 
                   <div style={{ marginTop: 18 }}>
                     <span className={styles.label}>カバー画像</span>
-                    <div style={{ marginTop: 8 }}>
-                      <FileUploadTrigger accept="image/*" inputName="coverImage" buttonLabel="カバー画像をアップロード（任意）" onChange={handleCoverChange} />
+                    <p className={styles.helperText} style={{ marginTop: 8 }}>
+                      後からでも設定できます。比率は 16:9 推奨です。
+                    </p>
+                    <div style={{ marginTop: 8 }} className={styles.inlineActions}>
+                      <FileUploadTrigger accept="image/*" inputName="coverImage" buttonLabel={coverImage ? 'カバー画像を差し替える' : 'カバー画像をアップロード（任意）'} onChange={handleCoverChange} />
+                      {coverImage ? (
+                        <button type="button" className={styles.smallButton} onClick={handleCoverRemove}>
+                          削除
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className={styles.helperPanel} style={{ marginTop: 12, alignItems: 'flex-start' }}>
+                      <div>
+                        <strong>カバー画像生成プロンプト例</strong>
+                        <p className={styles.helperText} style={{ marginTop: 8 }}>
+                          お好みの画像生成AIに設定ファイル（タイトル_setting.md）を入力し、以下のようなプロンプトで画像を生成できます。
+                        </p>
+                        <textarea className={styles.textarea} style={{ minHeight: 112, marginTop: 10 }} readOnly value={coverImagePromptExample} />
+                        <div className={styles.inlineActions} style={{ marginTop: 10 }}>
+                          <button type="button" className={styles.smallButton} onClick={() => void handleCopyCoverPrompt()} disabled={!coverImagePromptExample}>
+                            {isCoverPromptCopied ? 'コピーしました' : 'プロンプトをコピー'}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -1552,8 +1624,8 @@ export default function ScenarioCreatePage() {
             <section className={styles.darkCard}>
               <div className={styles.darkBody}>
                 <div className={styles.sectionHeader}>
-                  <div>
-                    <h2 className={styles.sectionTitle}>プレイ設定</h2>
+                    <div>
+                      <h2 className={styles.sectionTitle}>設定</h2>
                   </div>
                 </div>
 
@@ -1566,6 +1638,9 @@ export default function ScenarioCreatePage() {
                         {isApiKeyVisible ? '隠す' : '表示'}
                       </button>
                     </div>
+                    <a href={GOOGLE_AI_STUDIO_API_KEYS_URL} target="_blank" rel="noreferrer" className={styles.inlineLink}>
+                      Google AI Studio で API キーを取得する
+                    </a>
                   </label>
                   <label className={styles.field}>
                     <span className={styles.label}>APIキーの保存方法</span>
@@ -1581,6 +1656,13 @@ export default function ScenarioCreatePage() {
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
+                    <p className={styles.helperText} style={{ marginTop: 8 }}>
+                      モデルごとに利用制限が異なります。{' '}
+                      <a href={GOOGLE_AI_STUDIO_RATE_LIMITS_URL} target="_blank" rel="noreferrer" className={styles.inlineLink}>
+                        Google AI Studio の「Gemini API のレート制限」
+                      </a>
+                      を参照してください。
+                    </p>
                   </label>
                   <div className={styles.fullField}>
                     <span className={styles.label}>進め方</span>
@@ -1589,7 +1671,7 @@ export default function ScenarioCreatePage() {
                         一気に最後まで
                       </button>
                       <button type="button" className={`${styles.modeButton} ${executionMode === 'step' ? styles.modeButtonActive : ''}`} onClick={() => setExecutionMode('step')}>
-                        各ステップで止める
+                        ステップごとに停止
                       </button>
                     </div>
                   </div>
@@ -1622,14 +1704,14 @@ export default function ScenarioCreatePage() {
                   {openPhaseSections.phase1 ? (
                     <div className={styles.phaseContent}>
                       <div>
-                        <span className={styles.label}>アイデアを入力</span>
+                        <span className={styles.label}>アイデアを入力してください。</span>
                         <textarea
                           id="generator-idea"
                           name="generatorIdeaText"
                           className={styles.textarea}
                           value={generatorIdeaText}
                           onChange={(event) => setGeneratorIdeaText(event.target.value)}
-                          placeholder="例: 海辺の町が舞台。ひと夏の終わりの寂しさと、保健室の先生のやさしい違和感を軸にしたい。画像の少女がヒロイン。"
+                          placeholder="例: 海辺の町が舞台で、画像の青年が主人公の物語。"
                         />
                       </div>
 
@@ -1709,7 +1791,7 @@ export default function ScenarioCreatePage() {
                               ステップ1 を再生成
                             </button>
                             <button type="button" className={styles.primaryButton} onClick={handleApproveHook} disabled={isGenerating || hookApproved}>
-                              {hookApproved ? '承認済み' : 'この内容で続行'}
+                              {hookApproved ? '承認済み' : 'この世界観で続行'}
                             </button>
                             {isPhase1Generating ? (
                               <button type="button" className={styles.dangerButton} onClick={handleStopGeneration}>
@@ -1725,7 +1807,8 @@ export default function ScenarioCreatePage() {
 
                 <div className={styles.phaseList}>
                   {PHASE_DEFINITIONS.filter((phase) => phase.id !== 'phase1').map((phase) => (
-                    <div key={phase.id} className={styles.phaseBlock}>
+                    <React.Fragment key={phase.id}>
+                    <div className={styles.phaseBlock}>
                       <button type="button" className={styles.phaseToggle} onClick={() => togglePhaseSection(phase.id)}>
                         <div className={styles.phaseToggleMeta}>
                           <div className={styles.downloadTitle}>{phase.label}</div>
@@ -1744,9 +1827,9 @@ export default function ScenarioCreatePage() {
                             </div>
                           ) : null}
 
-                          {pendingPhase === phase.id || runningPhaseId === phase.id || failedPhase === phase.id ? (
+                          {(runningPhaseId === phase.id || failedPhase === phase.id || (pendingPhase === phase.id && phase.id !== 'phase4')) ? (
                             <div className={`${styles.actionsRow} ${styles.centeredActions}`}>
-                              {pendingPhase === phase.id ? (
+                              {pendingPhase === phase.id && phase.id !== 'phase4' ? (
                                 <button
                                   type="button"
                                   className={styles.primaryButton}
@@ -1809,6 +1892,26 @@ export default function ScenarioCreatePage() {
                         </div>
                       ) : null}
                     </div>
+                    {executionMode === 'step' && phase.id === 'phase3b' && phaseOutputs.phase3b ? (
+                      <div className={styles.phaseBlock}>
+                        <div className={styles.phaseContent} style={{ marginTop: 0 }}>
+                          <div className={styles.phaseTitleRow}>
+                            <strong>修正要望</strong>
+                            <span className={styles.badge}>{revisionRequest.trim() ? '入力あり' : '任意'}</span>
+                          </div>
+                          <label className={styles.fullField}>
+                            <span className={styles.label}>最終修正を実行するにあたり、何か要望があれば記入してください。</span>
+                            <textarea id="revision-request" name="revisionRequest" className={styles.textarea} value={revisionRequest} onChange={(event) => setRevisionRequest(event.target.value)} placeholder="例: ヒロインの動機をもう少し切実に。中盤の会話イベントを増やし、終盤の反転は感情寄りにしたい。" />
+                          </label>
+                          <div className={styles.actionsRow}>
+                            <button type="button" className={styles.primaryButton} onClick={() => void withGenerationGuard(runPhase4FromCurrentState)} disabled={isGenerating}>
+                              {runningPhaseId === 'phase4' ? '実行中' : finalScenario ? 'ステップ4 を再実行' : 'ステップ4 を実行'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                    </React.Fragment>
                   ))}
                 </div>
 
@@ -1827,6 +1930,71 @@ export default function ScenarioCreatePage() {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
               <button onClick={() => closeAppConfirm(false)} style={{ background: 'transparent', color: 'var(--text-main, #111)', border: '1px solid var(--glass-border, rgba(0,0,0,0.15))', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px' }}>{appConfirm.cancelLabel}</button>
               <button onClick={() => closeAppConfirm(true)} style={{ background: appConfirm.danger ? '#b91c1c' : '#111', color: '#fff', border: 'none', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px', fontWeight: 700 }}>{appConfirm.confirmLabel}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {playStartOptions && (
+        <div onClick={() => setPlayStartOptions(null)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px', backdropFilter: 'blur(6px)' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--glass-bg, rgba(255,255,255,0.9))', backdropFilter: 'blur(24px)', border: '1px solid var(--glass-border, rgba(0,0,0,0.1))', padding: '24px', borderRadius: '12px', width: '100%', maxWidth: '460px', boxShadow: '0 12px 40px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <h3 style={{ margin: 0, color: 'var(--text-main, #111)', fontSize: '1rem', letterSpacing: '1.6px' }}>プレイ開始設定</h3>
+              <p style={{ margin: '0.8rem 0 0', color: 'var(--text-main, #111)', fontSize: '0.92rem', lineHeight: 1.75 }}>
+                プレイ画面へ移動する前に、使用する AI モデルとフォールバック設定を選んでください。
+              </p>
+            </div>
+
+            <label className={styles.field}>
+              <span className={styles.label}>セーブ名</span>
+              <input
+                className={styles.input}
+                value={playStartOptions.projectName}
+                onChange={(event) => setPlayStartOptions((prev) => prev ? { ...prev, projectName: event.target.value } : prev)}
+                placeholder="プレイ中に使うセーブ名"
+              />
+            </label>
+
+            <label className={styles.field}>
+              <span className={styles.label}>AIモデル</span>
+              <select
+                className={styles.select}
+                value={playStartOptions.selectedModel}
+                onChange={(event) => setPlayStartOptions((prev) => prev ? { ...prev, selectedModel: normalizePlaySelectedModel(event.target.value) } : prev)}
+              >
+                {PLAY_MODEL_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <p className={styles.helperText} style={{ marginTop: 8 }}>
+                モデルごとに利用制限が異なります。{' '}
+                <a href={GOOGLE_AI_STUDIO_RATE_LIMITS_URL} target="_blank" rel="noreferrer" style={{ color: '#1d4ed8', textDecoration: 'underline', textUnderlineOffset: '3px', fontWeight: 600 }}>
+                  Google AI Studio の「Gemini API のレート制限」
+                </a>
+                を参照してください。
+              </p>
+            </label>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', borderRadius: '12px', border: '1px solid var(--glass-border, rgba(0,0,0,0.1))', padding: '14px 16px' }}>
+              <div>
+                <div className={styles.label}>フォールバック</div>
+                <p className={styles.helperText} style={{ marginTop: 6 }}>
+                  混雑時に別モデルへ自動で切り替えます。
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-pressed={playStartOptions.fallbackEnabled}
+                onClick={() => setPlayStartOptions((prev) => prev ? { ...prev, fallbackEnabled: !prev.fallbackEnabled } : prev)}
+                style={{ width: '44px', height: '24px', background: playStartOptions.fallbackEnabled ? '#4a7c59' : '#a3a3a3', borderRadius: '999px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s', border: 'none', flexShrink: 0 }}
+              >
+                <span style={{ position: 'absolute', top: '3px', left: playStartOptions.fallbackEnabled ? '23px' : '3px', width: '18px', height: '18px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s', display: 'block' }} />
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button type="button" onClick={() => setPlayStartOptions(null)} style={{ background: 'transparent', color: 'var(--text-main, #111)', border: '1px solid var(--glass-border, rgba(0,0,0,0.15))', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer', minWidth: '108px' }}>キャンセル</button>
+              <button type="button" onClick={handleConfirmPlayGeneratedScenario} disabled={!playStartOptions.projectName.trim()} style={{ background: '#111', color: '#fff', border: 'none', borderRadius: '999px', padding: '0.72rem 1.5rem', fontSize: '0.9rem', cursor: playStartOptions.projectName.trim() ? 'pointer' : 'not-allowed', minWidth: '108px', fontWeight: 700, opacity: playStartOptions.projectName.trim() ? 1 : 0.5 }}>プレイ開始</button>
             </div>
           </div>
         </div>

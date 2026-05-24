@@ -107,9 +107,9 @@ export interface ApiLikeResponse<T> {
 
 const FALLBACK_CHAIN = [
   'gemma-4-31b-it',
-  'gemma-4-26b-a4b-it',
   'gemini-3.1-flash-lite',
 ];
+const DEFAULT_MODEL = FALLBACK_CHAIN[0];
 
 const isRecord = (value: unknown): value is UnknownRecord => typeof value === 'object' && value !== null;
 
@@ -468,14 +468,15 @@ const fetchWithRetry = async <T>(fn: () => Promise<T>, abortSignal?: AbortSignal
 };
 
 const createChatGenerator = (ai: GoogleGenAI, requestedModel: string, fallbackEnabled: boolean, abortSignal?: AbortSignal, maxRetries = 3) => {
+  const normalizedRequestedModel = FALLBACK_CHAIN.includes(requestedModel) ? requestedModel : DEFAULT_MODEL;
   const getModelsToTry = (selected: string, enableFallback: boolean): string[] => {
     if (!enableFallback) return [selected];
     const index = FALLBACK_CHAIN.indexOf(selected);
-    if (index === -1) return [selected, ...FALLBACK_CHAIN];
+    if (index === -1) return [DEFAULT_MODEL, ...FALLBACK_CHAIN.filter((model) => model !== DEFAULT_MODEL)];
     return [...FALLBACK_CHAIN.slice(index), ...FALLBACK_CHAIN.slice(0, index)];
   };
 
-  const modelsToTry = getModelsToTry(requestedModel, fallbackEnabled);
+  const modelsToTry = getModelsToTry(normalizedRequestedModel, fallbackEnabled);
 
   const generateWithFallback = async <T>(
     fn: (model: string) => Promise<T>,
@@ -487,8 +488,8 @@ const createChatGenerator = (ai: GoogleGenAI, requestedModel: string, fallbackEn
     for (const model of models) {
       try {
         const result = await fetchWithRetry(() => fn(model), abortSignal, maxRetries);
-        if (model !== requestedModel && (!overrideModelsToTry || overrideModelsToTry[0] !== model)) {
-          console.info(`✅ [フォールバック成功] ${overrideModelsToTry ? overrideModelsToTry[0] : requestedModel} → ${model}`);
+        if (model !== normalizedRequestedModel && (!overrideModelsToTry || overrideModelsToTry[0] !== model)) {
+          console.info(`✅ [フォールバック成功] ${overrideModelsToTry ? overrideModelsToTry[0] : normalizedRequestedModel} → ${model}`);
         }
         return { result, usedModel: model };
       } catch (error: unknown) {

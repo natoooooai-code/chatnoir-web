@@ -53,6 +53,8 @@ export interface PendingGeneratedScenarioPayload {
   prologueText: string;
   mapFileText: string;
   coverImage?: string;
+  selectedModel?: string;
+  fallbackEnabled?: boolean;
   scenarioMeta: ScenarioMetaData;
 }
 
@@ -297,6 +299,8 @@ export const consumePendingGeneratedScenario = (): PendingGeneratedScenarioPaylo
       prologueText: parsed.prologueText,
       mapFileText: parsed.mapFileText || '',
       coverImage: parsed.coverImage || '',
+      selectedModel: typeof parsed.selectedModel === 'string' ? parsed.selectedModel : undefined,
+      fallbackEnabled: typeof parsed.fallbackEnabled === 'boolean' ? parsed.fallbackEnabled : undefined,
       scenarioMeta: parsed.scenarioMeta || {},
     };
   } catch {

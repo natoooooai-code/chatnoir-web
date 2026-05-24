@@ -304,6 +304,14 @@
   line-height: 1.6;
 }
 
+.inlineLink {
+  color: #9fb6ff;
+  font-size: 0.72rem;
+  line-height: 1.7;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .helperPanel {
   min-height: 56px;
   display: flex;
