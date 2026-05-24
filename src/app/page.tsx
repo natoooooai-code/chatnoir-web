@@ -1872,8 +1872,8 @@ export default function ChatNoir() {
     if (parsed.sidebarWidth !== undefined) setSidebarWidth(parsed.sidebarWidth);
     if (parsed.leftSidebarWidth !== undefined) setLeftSidebarWidth(parsed.leftSidebarWidth);
     setIsSidebarOpen(parsed.isSidebarOpen !== undefined ? parsed.isSidebarOpen : false);
-    setSessionRunId(parsed.sessionRunId || '');
-    setSaveName(parsed.saveName || '');
+    setSessionRunId(parsed.sessionRunId || buildDuplicateSessionRunId());
+    setSaveName(parsed.saveName || parsed.scenarioTitle || 'New Scenario');
     setPlayerMemo(parsed.playerMemo || '');
     setOpenSections(parsed.openSections || { ...DEFAULT_OPEN_SECTIONS });
     setEndingPhase(parsed.endingPhase || 'NONE');
@@ -3136,9 +3136,10 @@ ${currentMapJson}
   const handleSaveData = () => {
     try {
       const saveData = {
-        gameState, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey,
-        charactersData, factsData, mysteriesData, monologueData, theme, fontFamily, fontSize, isVertical, sidebarWidth, isSidebarOpen, scenarioTitle, endingPhase, reviewMessages, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath,
-        mapLayers, currentPos
+        gameState, openingFlowStage, messages, gmRuleText, scenarioText, briefingText, prologueText, mapFileText, coverImage, apiKey,
+        charactersData, factsData, mysteriesData, monologueData, playerMemo, openSections, theme, fontFamily, fontSize, isVertical, sidebarWidth, leftSidebarWidth, isSidebarOpen, sessionRunId, saveName, scenarioTitle, scenarioMeta, endingPhase, reviewMessages, isGmModalOpen, supportMessages, supportStorySnapshots, supportSuggestions, supportPersonaPath, isSupportModalOpen, isSupportSidebarOpen,
+        mapLayers, currentPos, selectedModel, fallbackEnabled,
+        lastPlay: new Date().toISOString()
       };
 
       const fileNameTitle = scenarioTitle.trim().replace(/[\/\\?%*:|"<>]/g, '_');
@@ -3152,7 +3153,7 @@ ${currentMapJson}
       a.download = `${fileNameTitle}_${datePart}_${timePart}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast('セーブデータをダウンロード保存しました');
+      showToast('セーブデータをファイルとして書き出しました');
       setShowSettings(false);
     } catch {
       showAppAlert("セーブに失敗しました");
@@ -3180,10 +3181,53 @@ ${currentMapJson}
       try {
         const text = await file.text();
         const parsed = JSON.parse(text);
-        restoreStateData(parsed);
-        showToast('セーブデータを復元しました');
+
+        // オートセーブ用に必要なメタデータの補正と付与
+        const restoredSessionRunId = parsed.sessionRunId || buildDuplicateSessionRunId();
+        const restoredScenarioTitle = parsed.scenarioTitle || 'New Scenario';
+        const restoredSaveName = parsed.saveName || `${restoredScenarioTitle} (インポート)`;
+
+        const nextParsed = {
+          ...parsed,
+          sessionRunId: restoredSessionRunId,
+          saveName: restoredSaveName,
+          scenarioTitle: restoredScenarioTitle,
+        };
+
+        // UI状態の復元
+        restoreStateData(nextParsed);
+
+        // IndexedDB（待機室）へ即時保存して自動セーブと同期
+        const fileNameTitle = sanitizeScenarioTitle(restoredScenarioTitle);
+        if (fileNameTitle) {
+          const runKey = buildAutoSaveKey(fileNameTitle, restoredSessionRunId);
+          const lastPlay = new Date().toISOString();
+          const dbSaveData = {
+            ...nextParsed,
+            lastPlay,
+          };
+
+          // マップスナップショットの保存
+          const restoredMapState = normalizeStoredMapState(parsed);
+          persistMapSnapshot(runKey, restoredMapState.layers, restoredMapState.currentPos || cloneDefaultCurrentPos(), lastPlay);
+
+          // sessionStorageにキーを設定
+          sessionStorage.setItem('chatnoir-current-save-key', runKey);
+
+          // IndexedDBに保存
+          await saveToIDB(runKey, dbSaveData);
+
+          // 待機室にいる場合はリストを再取得
+          if (gameState === 'SAVES') {
+            const metas = await getAllIDBSavesMeta();
+            setAutoSaves(metas);
+          }
+        }
+
+        showToast('ファイルからデータを読み込みました');
         setShowSettings(false);
-      } catch {
+      } catch (e) {
+        console.error(e);
         showAppAlert("ロードに失敗しました。ファイル形式が不正です。");
       }
     };
@@ -3858,7 +3902,7 @@ ${currentMapJson}
                 新しく遊ぶ
               </button>
               <button onClick={handleLoadData} style={{ background: 'transparent', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px' }}>
-                ファイルからロード
+                ファイルから読み込み
               </button>
               <button onClick={() => setShowLibrarySettings((prev) => !prev)} style={{ background: showLibrarySettings ? '#262626' : '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px' }}>
                 {showLibrarySettings ? '設定を閉じる' : 'AIの設定'}
@@ -4799,9 +4843,9 @@ ${currentMapJson}
                         }} />
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                      <button onClick={handleSaveData} style={{ flex: 1, background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '6px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>手動セーブ</button>
-                      <button onClick={handleLoadData} style={{ flex: 1, background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '6px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>手動ロード</button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
+                      <button onClick={handleSaveData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ書き出し</button>
+                      <button onClick={handleLoadData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ読み込み</button>
                     </div>
                     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>AIモデル</p>

@@ -1487,20 +1487,20 @@ export default function ScenarioCreatePage() {
 
   const titledPhase2Files = phase2Package
     ? [
-        { title: '設定ファイル', fileName: `${scenarioFileStem}_setting.md`, text: phase2Package.scenarioText, mimeType: 'text/markdown;charset=utf-8' },
-        { title: 'プロローグ', fileName: `${scenarioFileStem}_prologue.md`, text: phase2Package.prologueText, mimeType: 'text/markdown;charset=utf-8' },
-        { title: '初期マップ', fileName: `${scenarioFileStem}_initial-map.json`, text: phase2Package.mapJsonText, mimeType: 'application/json;charset=utf-8' },
-      ]
+      { title: '設定ファイル', fileName: `${scenarioFileStem}_setting.md`, text: phase2Package.scenarioText, mimeType: 'text/markdown;charset=utf-8' },
+      { title: 'プロローグ', fileName: `${scenarioFileStem}_prologue.md`, text: phase2Package.prologueText, mimeType: 'text/markdown;charset=utf-8' },
+      { title: '初期マップ', fileName: `${scenarioFileStem}_initial-map.json`, text: phase2Package.mapJsonText, mimeType: 'application/json;charset=utf-8' },
+    ]
     : [];
 
   const finalFiles = finalScenario
     ? [
-        { title: '設定ファイル', fileName: `${scenarioFileStem}_setting.md`, text: finalScenario.scenarioText, mimeType: 'text/markdown;charset=utf-8' },
-        { title: 'プロローグ', fileName: `${scenarioFileStem}_prologue.md`, text: finalScenario.prologueText, mimeType: 'text/markdown;charset=utf-8' },
-        { title: 'ブリーフィング', fileName: `${scenarioFileStem}_briefing.md`, text: finalScenario.briefingText, mimeType: 'text/markdown;charset=utf-8' },
-        { title: '初期マップ', fileName: `${scenarioFileStem}_initial-map.json`, text: finalScenario.mapJsonText, mimeType: 'application/json;charset=utf-8' },
-        { title: 'メタデータ', fileName: `${scenarioFileStem}_metadata.json`, text: finalScenario.metadataJsonText, mimeType: 'application/json;charset=utf-8' },
-      ]
+      { title: '設定ファイル', fileName: `${scenarioFileStem}_setting.md`, text: finalScenario.scenarioText, mimeType: 'text/markdown;charset=utf-8' },
+      { title: 'プロローグ', fileName: `${scenarioFileStem}_prologue.md`, text: finalScenario.prologueText, mimeType: 'text/markdown;charset=utf-8' },
+      { title: 'ブリーフィング', fileName: `${scenarioFileStem}_briefing.md`, text: finalScenario.briefingText, mimeType: 'text/markdown;charset=utf-8' },
+      { title: '初期マップ', fileName: `${scenarioFileStem}_initial-map.json`, text: finalScenario.mapJsonText, mimeType: 'application/json;charset=utf-8' },
+      { title: 'メタデータ', fileName: `${scenarioFileStem}_metadata.json`, text: finalScenario.metadataJsonText, mimeType: 'application/json;charset=utf-8' },
+    ]
     : [];
   const coverImagePromptExample = finalScenario
     ? `この物語のキービジュアルを生成してください。タイトルは「${finalScenario.title}」です。タイトル以外のテキストは画像に含めないでください。`
@@ -1624,8 +1624,8 @@ export default function ScenarioCreatePage() {
             <section className={styles.darkCard}>
               <div className={styles.darkBody}>
                 <div className={styles.sectionHeader}>
-                    <div>
-                      <h2 className={styles.sectionTitle}>設定</h2>
+                  <div>
+                    <h2 className={styles.sectionTitle}>設定</h2>
                   </div>
                 </div>
 
@@ -1808,109 +1808,109 @@ export default function ScenarioCreatePage() {
                 <div className={styles.phaseList}>
                   {PHASE_DEFINITIONS.filter((phase) => phase.id !== 'phase1').map((phase) => (
                     <React.Fragment key={phase.id}>
-                    <div className={styles.phaseBlock}>
-                      <button type="button" className={styles.phaseToggle} onClick={() => togglePhaseSection(phase.id)}>
-                        <div className={styles.phaseToggleMeta}>
-                          <div className={styles.downloadTitle}>{phase.label}</div>
-                          <span className={`${styles.statusBadge} ${statusClassMap[phaseStatuses[phase.id]]}`}>{statusLabelMap[phaseStatuses[phase.id]]}</span>
-                        </div>
-                        <span className={styles.phaseToggleIcon}>{openPhaseSections[phase.id] ? '▲' : '▼'}</span>
-                      </button>
+                      <div className={styles.phaseBlock}>
+                        <button type="button" className={styles.phaseToggle} onClick={() => togglePhaseSection(phase.id)}>
+                          <div className={styles.phaseToggleMeta}>
+                            <div className={styles.downloadTitle}>{phase.label}</div>
+                            <span className={`${styles.statusBadge} ${statusClassMap[phaseStatuses[phase.id]]}`}>{statusLabelMap[phaseStatuses[phase.id]]}</span>
+                          </div>
+                          <span className={styles.phaseToggleIcon}>{openPhaseSections[phase.id] ? '▲' : '▼'}</span>
+                        </button>
 
-                      {openPhaseSections[phase.id] ? (
-                        <div className={styles.phaseContent}>
-                          {phaseOutputs[phase.id] ? (
-                            <div className={styles.inlineActions}>
-                              <button type="button" className={styles.smallButton} onClick={() => toggleOutputPhase(phase.id)}>
-                                {openOutputPhases[phase.id] ? '出力を非表示' : '出力を表示'}
+                        {openPhaseSections[phase.id] ? (
+                          <div className={styles.phaseContent}>
+                            {phaseOutputs[phase.id] ? (
+                              <div className={styles.inlineActions}>
+                                <button type="button" className={styles.smallButton} onClick={() => toggleOutputPhase(phase.id)}>
+                                  {openOutputPhases[phase.id] ? '出力を非表示' : '出力を表示'}
+                                </button>
+                              </div>
+                            ) : null}
+
+                            {(runningPhaseId === phase.id || failedPhase === phase.id || (pendingPhase === phase.id && phase.id !== 'phase4')) ? (
+                              <div className={`${styles.actionsRow} ${styles.centeredActions}`}>
+                                {pendingPhase === phase.id && phase.id !== 'phase4' ? (
+                                  <button
+                                    type="button"
+                                    className={styles.primaryButton}
+                                    onClick={() => void withGenerationGuard(phase.id === 'phase4' ? runPhase4FromCurrentState : runNextPendingPhase)}
+                                    disabled={isGenerating}
+                                  >
+                                    {runningPhaseId === phase.id ? '実行中' : '実行'}
+                                  </button>
+                                ) : null}
+                                {runningPhaseId === phase.id ? (
+                                  <button type="button" className={styles.dangerButton} onClick={handleStopGeneration}>
+                                    停止
+                                  </button>
+                                ) : null}
+                                {failedPhase === phase.id ? (
+                                  <button type="button" className={styles.secondaryButton} onClick={handleRetryFromFailedPhase} disabled={isGenerating}>
+                                    失敗地点から必要分を再実行
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+
+                            {openOutputPhases[phase.id] ? (
+                              <div className={styles.outputPanel}>
+                                <div className={styles.outputPanelHeader}>
+                                  <strong>{PHASE_DEFINITIONS.find((item) => item.id === phase.id)?.label}</strong>
+                                  <div className={styles.inlineActions}>
+                                    {phase.id === 'phase3a' || phase.id === 'phase3b' ? (
+                                      artifacts[phase.id] ? (
+                                        <button type="button" className={styles.smallButton} onClick={() => downloadTextFile(artifacts[phase.id]!.fileName, artifacts[phase.id]!.markdown)}>
+                                          Markdown を保存
+                                        </button>
+                                      ) : null
+                                    ) : null}
+                                    {phase.id === 'phase2' ? titledPhase2Files.filter((file) => file.text.trim()).map((file) => (
+                                      <button key={file.fileName} type="button" className={styles.smallButton} onClick={() => downloadTextFile(file.fileName, file.text, file.mimeType)}>
+                                        {file.title}
+                                      </button>
+                                    )) : null}
+                                    {phase.id === 'phase4' ? finalFiles.filter((file) => file.text.trim()).map((file) => (
+                                      <button key={file.fileName} type="button" className={styles.smallButton} onClick={() => downloadTextFile(file.fileName, file.text, file.mimeType)}>
+                                        {file.title}
+                                      </button>
+                                    )) : null}
+                                  </div>
+                                </div>
+                                {executionMode === 'step' ? (
+                                  <textarea
+                                    id={`${phase.id}-output-editor`}
+                                    name={`${phase.id}Output`}
+                                    className={styles.outputEditor}
+                                    value={phaseOutputs[phase.id] || ''}
+                                    onChange={(event) => updatePhaseOutputText(phase.id, event.target.value)}
+                                  />
+                                ) : (
+                                  <pre className={styles.outputPreviewWide}>{phaseOutputs[phase.id]}</pre>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      {executionMode === 'step' && phase.id === 'phase3b' && phaseOutputs.phase3b ? (
+                        <div className={styles.phaseBlock}>
+                          <div className={styles.phaseContent} style={{ marginTop: 0 }}>
+                            <div className={styles.phaseTitleRow}>
+                              <strong>修正要望</strong>
+                              <span className={styles.badge}>{revisionRequest.trim() ? '入力あり' : '任意'}</span>
+                            </div>
+                            <label className={styles.fullField}>
+                              <span className={styles.label}>最終修正を実行するにあたり、何か要望があれば記入してください。</span>
+                              <textarea id="revision-request" name="revisionRequest" className={styles.textarea} value={revisionRequest} onChange={(event) => setRevisionRequest(event.target.value)} placeholder="例: ヒロインの動機をもう少し切実に。中盤の会話イベントを増やし、終盤の反転は感情寄りにしたい。" />
+                            </label>
+                            <div className={styles.actionsRow}>
+                              <button type="button" className={styles.primaryButton} onClick={() => void withGenerationGuard(runPhase4FromCurrentState)} disabled={isGenerating}>
+                                {runningPhaseId === 'phase4' ? '実行中' : finalScenario ? 'ステップ4 を再実行' : 'ステップ4 を実行'}
                               </button>
                             </div>
-                          ) : null}
-
-                          {(runningPhaseId === phase.id || failedPhase === phase.id || (pendingPhase === phase.id && phase.id !== 'phase4')) ? (
-                            <div className={`${styles.actionsRow} ${styles.centeredActions}`}>
-                              {pendingPhase === phase.id && phase.id !== 'phase4' ? (
-                                <button
-                                  type="button"
-                                  className={styles.primaryButton}
-                                  onClick={() => void withGenerationGuard(phase.id === 'phase4' ? runPhase4FromCurrentState : runNextPendingPhase)}
-                                  disabled={isGenerating}
-                                >
-                                  {runningPhaseId === phase.id ? '実行中' : '実行'}
-                                </button>
-                              ) : null}
-                              {runningPhaseId === phase.id ? (
-                                <button type="button" className={styles.dangerButton} onClick={handleStopGeneration}>
-                                  停止
-                                </button>
-                              ) : null}
-                              {failedPhase === phase.id ? (
-                                <button type="button" className={styles.secondaryButton} onClick={handleRetryFromFailedPhase} disabled={isGenerating}>
-                                  失敗地点から必要分を再実行
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : null}
-
-                          {openOutputPhases[phase.id] ? (
-                            <div className={styles.outputPanel}>
-                              <div className={styles.outputPanelHeader}>
-                                <strong>{PHASE_DEFINITIONS.find((item) => item.id === phase.id)?.label}</strong>
-                                <div className={styles.inlineActions}>
-                                  {phase.id === 'phase3a' || phase.id === 'phase3b' ? (
-                                    artifacts[phase.id] ? (
-                                      <button type="button" className={styles.smallButton} onClick={() => downloadTextFile(artifacts[phase.id]!.fileName, artifacts[phase.id]!.markdown)}>
-                                        Markdown を保存
-                                      </button>
-                                    ) : null
-                                  ) : null}
-                                  {phase.id === 'phase2' ? titledPhase2Files.filter((file) => file.text.trim()).map((file) => (
-                                    <button key={file.fileName} type="button" className={styles.smallButton} onClick={() => downloadTextFile(file.fileName, file.text, file.mimeType)}>
-                                      {file.title}
-                                    </button>
-                                  )) : null}
-                                  {phase.id === 'phase4' ? finalFiles.filter((file) => file.text.trim()).map((file) => (
-                                    <button key={file.fileName} type="button" className={styles.smallButton} onClick={() => downloadTextFile(file.fileName, file.text, file.mimeType)}>
-                                      {file.title}
-                                    </button>
-                                  )) : null}
-                                </div>
-                              </div>
-                              {executionMode === 'step' ? (
-                                <textarea
-                                  id={`${phase.id}-output-editor`}
-                                  name={`${phase.id}Output`}
-                                  className={styles.outputEditor}
-                                  value={phaseOutputs[phase.id] || ''}
-                                  onChange={(event) => updatePhaseOutputText(phase.id, event.target.value)}
-                                />
-                              ) : (
-                                <pre className={styles.outputPreviewWide}>{phaseOutputs[phase.id]}</pre>
-                              )}
-                            </div>
-                          ) : null}
+                          </div>
                         </div>
                       ) : null}
-                    </div>
-                    {executionMode === 'step' && phase.id === 'phase3b' && phaseOutputs.phase3b ? (
-                      <div className={styles.phaseBlock}>
-                        <div className={styles.phaseContent} style={{ marginTop: 0 }}>
-                          <div className={styles.phaseTitleRow}>
-                            <strong>修正要望</strong>
-                            <span className={styles.badge}>{revisionRequest.trim() ? '入力あり' : '任意'}</span>
-                          </div>
-                          <label className={styles.fullField}>
-                            <span className={styles.label}>最終修正を実行するにあたり、何か要望があれば記入してください。</span>
-                            <textarea id="revision-request" name="revisionRequest" className={styles.textarea} value={revisionRequest} onChange={(event) => setRevisionRequest(event.target.value)} placeholder="例: ヒロインの動機をもう少し切実に。中盤の会話イベントを増やし、終盤の反転は感情寄りにしたい。" />
-                          </label>
-                          <div className={styles.actionsRow}>
-                            <button type="button" className={styles.primaryButton} onClick={() => void withGenerationGuard(runPhase4FromCurrentState)} disabled={isGenerating}>
-                              {runningPhaseId === 'phase4' ? '実行中' : finalScenario ? 'ステップ4 を再実行' : 'ステップ4 を実行'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
                     </React.Fragment>
                   ))}
                 </div>

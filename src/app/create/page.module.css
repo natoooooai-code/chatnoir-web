@@ -110,6 +110,7 @@
   letter-spacing: 0.05em;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
+
 .primaryButton:hover {
   background: #333;
 }
@@ -140,6 +141,7 @@
   text-decoration: underline;
   text-underline-offset: 4px;
 }
+
 .linkButton:hover {
   color: var(--text-main);
   transform: none;
@@ -227,6 +229,7 @@
   letter-spacing: 0.05em;
   color: var(--text-main);
 }
+
 .darkCard .sectionTitle {
   color: #fff;
 }
@@ -354,6 +357,7 @@
   cursor: pointer;
   transition: all 0.2s;
 }
+
 .uploadButton:hover {
   background: rgba(0, 0, 0, 0.05);
   border-color: rgba(0, 0, 0, 0.4);
@@ -538,6 +542,7 @@
   font-weight: 600;
   transition: all 0.2s;
 }
+
 .phaseTab:hover {
   color: var(--text-main);
   background: rgba(0, 0, 0, 0.05);
@@ -547,6 +552,7 @@
   background: var(--text-main);
   color: #fff;
 }
+
 .phaseTabActive:hover {
   background: var(--text-main);
   color: #fff;
@@ -651,6 +657,7 @@
 .darkBody .modeButton {
   color: rgba(255, 255, 255, 0.6);
 }
+
 .darkBody .modeButton:hover {
   color: #fff;
   background: rgba(255, 255, 255, 0.05);
@@ -875,9 +882,9 @@
     width: 100%;
   }
 
-  .headerActions > *,
-  .actionsRow > *,
-  .inlineActions > * {
+  .headerActions>*,
+  .actionsRow>*,
+  .inlineActions>* {
     flex: 1 1 100%;
   }
 
