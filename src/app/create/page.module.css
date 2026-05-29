@@ -20,6 +20,7 @@
 
 .headerCopy {
   max-width: 600px;
+  min-width: 0;
 }
 
 .titleRow {
@@ -77,6 +78,8 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
+  flex-wrap: wrap;
+  text-align: center;
 }
 
 .ghostButton:hover,
@@ -1125,6 +1128,35 @@
     flex-direction: column;
   }
 
+  .cardBody,
+  .phaseBody,
+  .noticeBody,
+  .hookBody,
+  .finalBody,
+  .darkBody {
+    padding: 24px;
+  }
+
+  .formGrid,
+  .finalStats {
+    grid-template-columns: 1fr;
+  }
+
+  .uploadGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sectionHeader,
+  .outputPanelHeader,
+  .phaseTitleRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .phaseToggleMeta {
+    flex-wrap: wrap;
+  }
+
   .coverFrame {
     width: min(220px, 100%);
   }
@@ -1132,8 +1164,37 @@
 
 @media (max-width: 760px) {
   .shell {
-    width: min(100vw - 20px, 100%);
+    width: min(calc(100vw - 20px), 100%);
     padding-top: 16px;
+    padding-bottom: 40px;
+  }
+
+  .header {
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .titleRow {
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .betaBadge {
+    margin-bottom: 0;
+  }
+
+  .cardBody,
+  .phaseBody,
+  .noticeBody,
+  .hookBody,
+  .finalBody,
+  .darkBody {
+    padding: 20px;
+  }
+
+  .phaseBlock,
+  .outputPanel {
+    padding: 16px;
   }
 
   .formGrid,
@@ -1150,15 +1211,27 @@
     align-items: stretch;
   }
 
+  .fileVisual,
+  .phaseToggle,
+  .secretField {
+    align-items: flex-start;
+  }
+
+  .secretField {
+    flex-direction: column;
+  }
+
   .headerActions,
   .actionsRow,
-  .inlineActions {
+  .inlineActions,
+  .outputControlsRight {
     width: 100%;
   }
 
   .headerActions>*,
   .actionsRow>*,
-  .inlineActions>* {
+  .inlineActions>*,
+  .outputControlsRight>* {
     flex: 1 1 100%;
   }
 
@@ -1174,11 +1247,81 @@
     flex-wrap: wrap;
   }
 
+  .phaseToggleIcon {
+    padding-top: 10px;
+  }
+
   .flowConnector {
     padding-left: 18px;
   }
 
+  .coverSectionPreview {
+    justify-content: center;
+  }
+
+  .coverUploadTrigger {
+    width: 100%;
+    align-items: center;
+  }
+
+  .coverFrame {
+    width: min(100%, 280px);
+  }
+
+  .helperPanel {
+    padding: 14px;
+  }
+
+  .outputPreviewWide,
+  .outputEditor {
+    min-height: 220px;
+    max-height: 70vh;
+    padding: 14px;
+  }
+
   .bookPlaceholderInner {
     padding: 18px 16px;
+  }
+}
+
+@media (max-width: 560px) {
+  .shell {
+    width: min(calc(100vw - 16px), 100%);
+  }
+
+  .title {
+    font-size: clamp(1.5rem, 8vw, 1.9rem);
+  }
+
+  .phaseBlock,
+  .outputPanel,
+  .outputPreviewWide,
+  .outputEditor {
+    border-radius: 16px;
+  }
+
+  .fileVisual {
+    flex-direction: column;
+  }
+
+  .fileIcon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .attachmentItem,
+  .downloadItem,
+  .finalFileItem {
+    padding: 14px;
+  }
+
+  .bookPlaceholderInner {
+    gap: 12px;
+    padding: 16px 14px;
+  }
+
+  .bookPlaceholderTitle {
+    font-size: 0.88rem;
+    letter-spacing: 0.08em;
   }
 }
