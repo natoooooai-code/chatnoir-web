@@ -98,6 +98,8 @@ type PhaseBundleOutputDefinition = {
   promptInstruction: string;
 };
 
+type FileVisualKind = GeneratorIdeaAttachmentKind | 'markdown' | 'json';
+
 const API_KEY_STORAGE_KEY = 'chatnoir_apiKey';
 const API_KEY_STORAGE_MODE_KEY = 'chatnoir_apiKeyStorageMode';
 const CREATE_DRAFT_STORAGE_KEY = 'chatnoir_scenarioCreateDraft_v1';
@@ -131,11 +133,11 @@ const PROMPT_PATHS: Record<GenerationPhaseId, string> = {
   phase4: 'scenario-generation-prompts/04_scenario_revision_app.md',
 };
 const PHASE_DEFINITIONS: PhaseCardDefinition[] = [
-  { id: 'phase1', label: 'ステップ1：コンセプト＆プロローグ（仮）設計' },
-  { id: 'phase2', label: 'ステップ2：シナリオ構築' },
-  { id: 'phase3a', label: 'ステップ3a：エンタメチェック' },
-  { id: 'phase3b', label: 'ステップ3b：ロジックチェック' },
-  { id: 'phase4', label: 'ステップ4：調整・最終修正' },
+  { id: 'phase1', label: 'コンセプト＆プロローグ（仮）設計' },
+  { id: 'phase2', label: 'シナリオ構築' },
+  { id: 'phase3a', label: 'エンタメチェック' },
+  { id: 'phase3b', label: 'ロジックチェック' },
+  { id: 'phase4', label: '調整・最終修正' },
 ];
 const GENERATION_SYSTEM_INSTRUCTION = 'あなたはシナリオ生成専用アシスタントです。これはゲーム本編進行ではありません。scene_blocks 形式の JSON、位置や時刻のステータス行、📍 や 🕐 の記号付き行、ゲームマスターとしての進行文は禁止です。与えられたプロンプトの出力フォーマットに厳密に従い、通常の Markdown / JSON コードブロックだけを返してください。';
 const PHASE_OUTPUT_WRAPPERS: Record<GenerationPhaseId, string> = {
@@ -352,15 +354,15 @@ const createAbortError = () => new DOMException('The operation was aborted.', 'A
 const createArtifactLabel = (phaseId: GenerationPhaseId): string => {
   switch (phaseId) {
     case 'phase1':
-      return 'ステップ1 コンセプト';
+      return 'コンセプト';
     case 'phase2':
-      return 'ステップ2 シナリオ構築';
+      return 'シナリオ構築';
     case 'phase3a':
-      return 'ステップ3a エンタメチェック';
+      return 'エンタメチェック';
     case 'phase3b':
-      return 'ステップ3b ロジックチェック';
+      return 'ロジックチェック';
     case 'phase4':
-      return 'ステップ4 最終修正';
+      return '最終修正';
   }
 };
 
@@ -469,6 +471,83 @@ const FileUploadTrigger = ({
   );
 };
 
+const IconDownload = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 3v12" />
+    <path d="M7 10.5 12 15.5 17 10.5" />
+    <path d="M5 19h14" />
+  </svg>
+);
+
+const IconPlay = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M8 6.5v11l9-5.5-9-5.5Z" />
+  </svg>
+);
+
+const IconMarkdownFile = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+    <path d="M14 3v5h5" />
+    <path d="M8 15v-3l2 2 2-2v3" />
+    <path d="M15 12v4" />
+    <path d="m13.5 14.5 1.5 1.5 1.5-1.5" />
+  </svg>
+);
+
+const IconJsonFile = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+    <path d="M14 3v5h5" />
+    <path d="M10 10c-1 1-1 3 0 4" />
+    <path d="M14 10c1 1 1 3 0 4" />
+    <path d="M12 9v6" />
+  </svg>
+);
+
+const IconImageFile = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+    <circle cx="9" cy="10" r="1.5" />
+    <path d="m6.5 17 4.2-4.2a1.5 1.5 0 0 1 2.1 0L17.5 17" />
+    <path d="m13.5 14 1.8-1.8a1.5 1.5 0 0 1 2.1 0l2.1 2.1" />
+  </svg>
+);
+
+const IconAudioFile = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M10 8v8" />
+    <path d="M14 6v12" />
+    <path d="M6 10v4" />
+    <path d="M18 9v6" />
+    <path d="M3 12h18" opacity="0.28" />
+  </svg>
+);
+
+const IconVideoFile = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3.5" y="5" width="13" height="14" rx="2.5" />
+    <path d="m16.5 10 4-2v8l-4-2" />
+    <path d="m9 10.5 3.5 2-3.5 2Z" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+const FileKindIcon = ({ kind }: { kind: FileVisualKind }) => {
+  switch (kind) {
+    case 'image':
+      return <IconImageFile />;
+    case 'audio':
+      return <IconAudioFile />;
+    case 'video':
+      return <IconVideoFile />;
+    case 'json':
+      return <IconJsonFile />;
+    case 'markdown':
+    default:
+      return <IconMarkdownFile />;
+  }
+};
+
 const statusLabelMap: Record<GenerationPhaseStatus, string> = {
   idle: '未実行',
   waiting: '待機中',
@@ -483,6 +562,42 @@ const statusClassMap: Record<GenerationPhaseStatus, string> = {
   running: styles.statusRunning,
   done: styles.statusDone,
   error: styles.statusError,
+};
+
+const stepCircleClassMap: Record<GenerationPhaseStatus, string> = {
+  idle: styles.stepIdle,
+  waiting: styles.stepWaiting,
+  running: styles.stepRunning,
+  done: styles.stepDone,
+  error: styles.stepError,
+};
+
+const phaseStepLabelMap: Record<GenerationPhaseId, string> = {
+  phase1: '1',
+  phase2: '2',
+  phase3a: '3a',
+  phase3b: '3b',
+  phase4: '4',
+};
+
+const fileKindLabelMap: Record<FileVisualKind, string> = {
+  markdown: 'Markdown',
+  json: 'JSON',
+  image: '画像',
+  audio: '音声',
+  video: '動画',
+};
+
+const getPhaseStepIndicatorText = (phaseId: GenerationPhaseId, status: GenerationPhaseStatus): string => {
+  if (status === 'done') return '✓';
+  if (status === 'error') return '!';
+  return phaseStepLabelMap[phaseId];
+};
+
+const getFileVisualKind = (fileName: string, mimeType: string, attachmentKind?: GeneratorIdeaAttachmentKind): FileVisualKind => {
+  if (attachmentKind) return attachmentKind;
+  if (mimeType.includes('json') || fileName.toLowerCase().endsWith('.json')) return 'json';
+  return 'markdown';
 };
 
 export default function ScenarioCreatePage() {
@@ -1484,6 +1599,18 @@ export default function ScenarioCreatePage() {
   const progressPercent = Math.round((completedCount / PHASE_ORDER.length) * 100);
   const isPhase1Generating = isGenerating && activePhaseRef.current === 'phase1';
   const runningPhaseId = PHASE_ORDER.find((phaseId) => phaseStatuses[phaseId] === 'running') || null;
+  const trailingPhases = PHASE_DEFINITIONS.filter((phase) => phase.id !== 'phase1');
+
+  const renderPhaseStepCircle = (phaseId: GenerationPhaseId) => {
+    const status = phaseStatuses[phaseId];
+    return (
+      <span className={`${styles.stepNumberCircle} ${stepCircleClassMap[status]}`}>
+        {getPhaseStepIndicatorText(phaseId, status)}
+      </span>
+    );
+  };
+
+  const isFlowConnectorActive = (phaseId: GenerationPhaseId) => phaseStatuses[phaseId] !== 'idle';
 
   const titledPhase2Files = phase2Package
     ? [
@@ -1561,30 +1688,55 @@ export default function ScenarioCreatePage() {
                         </div>
                       </div>
                     </div>
-                    {coverImage ? <img src={coverImage} alt="Generated cover" className={styles.coverPreview} /> : null}
                   </div>
 
                   <div className={styles.finalFiles}>
                     {finalFiles.filter((file) => file.text.trim()).map((file) => (
                       <div key={file.fileName} className={styles.finalFileItem}>
-                        <div className={styles.finalFileMeta}>
-                          <div className={styles.finalFileTitle}>{file.title}</div>
-                          <div className={styles.finalFileSub}>{file.fileName}</div>
+                        <div className={styles.fileVisual}>
+                          <span className={styles.fileIcon}>
+                            <FileKindIcon kind={getFileVisualKind(file.fileName, file.mimeType)} />
+                          </span>
+                          <div className={styles.finalFileMeta}>
+                            <div className={styles.fileMetaTop}>
+                              <div className={styles.finalFileTitle}>{file.title}</div>
+                              <span className={styles.fileKindTag}>{fileKindLabelMap[getFileVisualKind(file.fileName, file.mimeType)]}</span>
+                            </div>
+                            <div className={styles.finalFileSub}>{file.fileName}</div>
+                          </div>
                         </div>
                         <button type="button" className={styles.smallButton} onClick={() => downloadTextFile(file.fileName, file.text, file.mimeType)}>
-                          ダウンロード
+                          <span className={styles.buttonContent}><IconDownload />ダウンロード</span>
                         </button>
                       </div>
                     ))}
                   </div>
 
-                  <div style={{ marginTop: 18 }}>
+                  <div className={styles.coverSection} style={{ marginTop: 18 }}>
                     <span className={styles.label}>カバー画像</span>
                     <p className={styles.helperText} style={{ marginTop: 8 }}>
                       後からでも設定できます。比率は 16:9 推奨です。
                     </p>
+                    <div className={styles.coverSectionPreview}>
+                      <label className={styles.coverUploadTrigger}>
+                        <div className={styles.coverFrame}>
+                          {coverImage ? (
+                            <img src={coverImage} alt="Generated cover" className={styles.coverPreview} />
+                          ) : (
+                            <div className={styles.bookPlaceholder}>
+                              <span className={styles.bookPlaceholderSpine} aria-hidden="true" />
+                              <div className={styles.bookPlaceholderInner}>
+                                <span className={styles.bookPlaceholderLabel}>Mystery Draft</span>
+                                <span className={styles.bookPlaceholderTitle}>{finalScenario.title}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <span className={styles.coverUploadHint}>{coverImage ? '画像をクリックして差し替え' : 'クリックしてカバー画像をアップロード'}</span>
+                        <input className={styles.hiddenInput} type="file" accept="image/*" name="coverImage" onChange={handleCoverChange} />
+                      </label>
+                    </div>
                     <div style={{ marginTop: 8 }} className={styles.inlineActions}>
-                      <FileUploadTrigger accept="image/*" inputName="coverImage" buttonLabel={coverImage ? 'カバー画像を差し替える' : 'カバー画像をアップロード（任意）'} onChange={handleCoverChange} />
                       {coverImage ? (
                         <button type="button" className={styles.smallButton} onClick={handleCoverRemove}>
                           削除
@@ -1608,11 +1760,11 @@ export default function ScenarioCreatePage() {
                   </div>
 
                   <div className={styles.actionsRow} style={{ marginTop: 18 }}>
-                    <button type="button" className={styles.primaryButton} onClick={handlePlayGeneratedScenario}>
-                      このシナリオで遊ぶ
-                    </button>
                     <button type="button" className={styles.secondaryButton} onClick={() => void handleDownloadZip()}>
-                      すべてのファイルをZIPで一括ダウンロード
+                      <span className={styles.buttonContent}><IconDownload />すべてのファイルをZIPで一括ダウンロード（推奨）</span>
+                    </button>
+                    <button type="button" className={styles.primaryButton} onClick={handlePlayGeneratedScenario}>
+                      <span className={styles.buttonContent}><IconPlay />このシナリオで遊ぶ</span>
                     </button>
                   </div>
                 </div>
@@ -1692,17 +1844,21 @@ export default function ScenarioCreatePage() {
                   </div>
                 </div>
 
-                <div className={styles.phaseBlock}>
-                  <button type="button" className={styles.phaseToggle} onClick={() => togglePhaseSection('phase1')}>
-                    <div className={styles.phaseToggleMeta}>
-                      <div className={styles.downloadTitle}>{PHASE_DEFINITIONS[0].label}</div>
-                      <span className={`${styles.statusBadge} ${statusClassMap[phaseStatuses.phase1]}`}>{statusLabelMap[phaseStatuses.phase1]}</span>
-                    </div>
-                    <span className={styles.phaseToggleIcon}>{openPhaseSections.phase1 ? '▲' : '▼'}</span>
-                  </button>
+                <div className={styles.phaseFlowItem}>
+                  <div className={styles.phaseBlock}>
+                    <button type="button" className={styles.phaseToggle} onClick={() => togglePhaseSection('phase1')}>
+                      <div className={styles.phaseToggleMeta}>
+                        {renderPhaseStepCircle('phase1')}
+                        <div className={styles.phaseTitleCluster}>
+                          <div className={styles.downloadTitle}>{PHASE_DEFINITIONS[0].label}</div>
+                          <span className={`${styles.statusBadge} ${statusClassMap[phaseStatuses.phase1]}`}>{statusLabelMap[phaseStatuses.phase1]}</span>
+                        </div>
+                      </div>
+                      <span className={styles.phaseToggleIcon}>{openPhaseSections.phase1 ? '▲' : '▼'}</span>
+                    </button>
 
-                  {openPhaseSections.phase1 ? (
-                    <div className={styles.phaseContent}>
+                    {openPhaseSections.phase1 ? (
+                      <div className={styles.phaseContent}>
                       <div>
                         <span className={styles.label}>アイデアを入力してください。</span>
                         <textarea
@@ -1725,11 +1881,16 @@ export default function ScenarioCreatePage() {
                         <div className={styles.attachmentList}>
                           {attachments.map((attachment) => (
                             <div key={attachment.id} className={styles.attachmentItem}>
-                              <div className={styles.attachmentMeta}>
-                                <div className={styles.attachmentName}>{attachment.name}</div>
-                                <div className={styles.attachmentSub}>{attachment.mimeType} / {formatFileSize(attachment.sizeBytes)}</div>
-                                <div className={styles.badgeRow}>
-                                  <span className={styles.badge}>{attachment.kind.toUpperCase()}</span>
+                              <div className={styles.fileVisual}>
+                                <span className={styles.fileIcon}>
+                                  <FileKindIcon kind={attachment.kind} />
+                                </span>
+                                <div className={styles.attachmentMeta}>
+                                  <div className={styles.fileMetaTop}>
+                                    <div className={styles.attachmentName}>{attachment.name}</div>
+                                    <span className={styles.fileKindTag}>{fileKindLabelMap[attachment.kind]}</span>
+                                  </div>
+                                  <div className={styles.attachmentSub}>{attachment.mimeType} / {formatFileSize(attachment.sizeBytes)}</div>
                                 </div>
                               </div>
                               <button type="button" className={styles.smallButton} onClick={() => setAttachments((prev) => prev.filter((item) => item.id !== attachment.id))}>
@@ -1742,7 +1903,7 @@ export default function ScenarioCreatePage() {
 
                       <div className={`${styles.actionsRow} ${styles.centeredActions}`}>
                         <button type="button" className={styles.primaryButton} onClick={handleStartGeneration} disabled={!canStartPhase1 || isGenerating || isPromptLoading || Boolean(hookPreview)}>
-                          {hookPreview ? 'ステップ1 生成済み' : isPhase1Generating ? '生成中...' : 'プロローグ（仮）を生成'}
+                          {hookPreview ? 'コンセプト生成済み' : isPhase1Generating ? '生成中...' : 'プロローグ（仮）を生成'}
                         </button>
                         {isPhase1Generating ? (
                           <button type="button" className={styles.dangerButton} onClick={handleStopGeneration}>
@@ -1788,7 +1949,7 @@ export default function ScenarioCreatePage() {
                           ) : null}
                           <div className={styles.actionsRow} style={{ marginTop: 16 }}>
                             <button type="button" className={styles.secondaryButton} onClick={() => void withGenerationGuard(runPhase1)} disabled={isGenerating}>
-                              ステップ1 を再生成
+                              コンセプトを再生成
                             </button>
                             <button type="button" className={styles.primaryButton} onClick={handleApproveHook} disabled={isGenerating || hookApproved}>
                               {hookApproved ? '承認済み' : 'この世界観で続行'}
@@ -1801,24 +1962,32 @@ export default function ScenarioCreatePage() {
                           </div>
                         </div>
                       ) : null}
-                    </div>
-                  ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className={`${styles.flowConnector} ${isFlowConnectorActive('phase2') ? styles.flowConnectorActive : ''}`} aria-hidden="true">
+                    <span className={styles.flowConnectorLine} />
+                  </div>
                 </div>
 
                 <div className={styles.phaseList}>
-                  {PHASE_DEFINITIONS.filter((phase) => phase.id !== 'phase1').map((phase) => (
+                  {trailingPhases.map((phase, index) => (
                     <React.Fragment key={phase.id}>
-                      <div className={styles.phaseBlock}>
-                        <button type="button" className={styles.phaseToggle} onClick={() => togglePhaseSection(phase.id)}>
-                          <div className={styles.phaseToggleMeta}>
-                            <div className={styles.downloadTitle}>{phase.label}</div>
-                            <span className={`${styles.statusBadge} ${statusClassMap[phaseStatuses[phase.id]]}`}>{statusLabelMap[phaseStatuses[phase.id]]}</span>
-                          </div>
-                          <span className={styles.phaseToggleIcon}>{openPhaseSections[phase.id] ? '▲' : '▼'}</span>
-                        </button>
+                      <div className={styles.phaseFlowItem}>
+                        <div className={styles.phaseBlock}>
+                          <button type="button" className={styles.phaseToggle} onClick={() => togglePhaseSection(phase.id)}>
+                            <div className={styles.phaseToggleMeta}>
+                              {renderPhaseStepCircle(phase.id)}
+                              <div className={styles.phaseTitleCluster}>
+                                <div className={styles.downloadTitle}>{phase.label}</div>
+                                <span className={`${styles.statusBadge} ${statusClassMap[phaseStatuses[phase.id]]}`}>{statusLabelMap[phaseStatuses[phase.id]]}</span>
+                              </div>
+                            </div>
+                            <span className={styles.phaseToggleIcon}>{openPhaseSections[phase.id] ? '▲' : '▼'}</span>
+                          </button>
 
-                        {openPhaseSections[phase.id] ? (
-                          <div className={styles.phaseContent}>
+                          {openPhaseSections[phase.id] ? (
+                            <div className={styles.phaseContent}>
                             {phaseOutputs[phase.id] ? (
                               <div className={styles.inlineActions}>
                                 <button type="button" className={styles.smallButton} onClick={() => toggleOutputPhase(phase.id)}>
@@ -1889,6 +2058,12 @@ export default function ScenarioCreatePage() {
                                 )}
                               </div>
                             ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                        {index < trailingPhases.length - 1 ? (
+                          <div className={`${styles.flowConnector} ${isFlowConnectorActive(trailingPhases[index + 1].id) ? styles.flowConnectorActive : ''}`} aria-hidden="true">
+                            <span className={styles.flowConnectorLine} />
                           </div>
                         ) : null}
                       </div>
@@ -1905,7 +2080,7 @@ export default function ScenarioCreatePage() {
                             </label>
                             <div className={styles.actionsRow}>
                               <button type="button" className={styles.primaryButton} onClick={() => void withGenerationGuard(runPhase4FromCurrentState)} disabled={isGenerating}>
-                                {runningPhaseId === 'phase4' ? '実行中' : finalScenario ? 'ステップ4 を再実行' : 'ステップ4 を実行'}
+                                {runningPhaseId === 'phase4' ? '実行中' : finalScenario ? '最終修正を再実行' : '最終修正を実行'}
                               </button>
                             </div>
                           </div>

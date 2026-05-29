@@ -66,11 +66,6 @@ const APP_LOGO_WIDE_PATH = 'logo_yoko.png';
 const REPOSITORY_NAME = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? '';
 const BUILD_TIME_BASE_PATH = process.env.GITHUB_ACTIONS === 'true' && REPOSITORY_NAME ? `/${REPOSITORY_NAME}` : '';
 const SUPPORT_SUGGESTION_PROMPT = '今の状況で次に入力すると良さそうな文を3つ提案して。';
-const SCENARIO_DEBUG_PROMPT = [
-  'あなたはプレイヤーの代わりに、次に送る入力を1つだけ決めてください。',
-  'シナリオは、明確なエピローグ＆【終】が本文として提示されるまでは終わっていません。物語がきれいに終わっているように思えても、完了扱いにせず、エピローグに到達するための入力を選んでください。',
-  'まず「なぜその入力にするか」を簡潔に説明し、そのあとに実際に送る入力文を1つだけ示してください。'
-].join('\n');
 const SUPPORT_HISTORY_MAX_MESSAGES = 18;
 const SUPPORT_HISTORY_MAX_CHARS = 12000;
 const GOOGLE_AI_STUDIO_API_KEYS_URL = 'https://aistudio.google.com/app/api-keys';
@@ -1153,7 +1148,6 @@ export default function ChatNoir() {
   const [isAutoSupportMode, setIsAutoSupportMode] = useState(() => {
     try { return localStorage.getItem('chatnoir_autoSupportMode') === 'true'; } catch { return false; }
   });
-  const [isScenarioDebugMode, setIsScenarioDebugMode] = useState(false);
   const supportInputRef = useRef<ChatInputHandle>(null);
   const [supportMessages, setSupportMessages] = useState<AppMessage[]>([]);
   const [supportStorySnapshots, setSupportStorySnapshots] = useState<SupportStorySnapshot[]>([]);
@@ -1226,7 +1220,7 @@ export default function ChatNoir() {
 
   const isSupportPersonaReady = supportPersonaPrompt.trim().length > 0 && !supportPersonaLoadError;
   const isSupportPersonaLoading = !supportPersonaLoadError && !isSupportPersonaReady;
-  const isSupportActionDisabled = isSupportLoading || isScenarioDebugMode || !isSupportPersonaReady;
+  const isSupportActionDisabled = isSupportLoading || !isSupportPersonaReady;
 
   useEffect(() => {
     if (!appAlert && !appConfirm && !appPrompt) return;
@@ -1535,9 +1529,6 @@ export default function ChatNoir() {
   const isInitialScrollDone = useRef(false);
   const supportScrollRef = useRef<HTMLDivElement>(null);
   const supportAbortControllerRef = useRef<AbortController | null>(null);
-  const isScenarioDebugModeRef = useRef(false);
-  const scenarioDebugSessionRef = useRef(0);
-  const debugAutomatedMessageRef = useRef(false);
 
   useEffect(() => {
     latestMessagesRef.current = messages;
@@ -1555,10 +1546,6 @@ export default function ChatNoir() {
     recoverableSendRef.current = nextValue;
     setRecoverableSend(nextValue);
   };
-
-  useEffect(() => {
-    isScenarioDebugModeRef.current = isScenarioDebugMode;
-  }, [isScenarioDebugMode]);
 
   const setSupportMessagesState = (nextValue: React.SetStateAction<AppMessage[]>) => {
     setSupportMessages((prev) => {
@@ -1578,22 +1565,6 @@ export default function ChatNoir() {
       latestSupportStorySnapshotsRef.current = nextSnapshots;
       return nextSnapshots;
     });
-  };
-
-  const removePendingDebugSupportAction = () => {
-    setSupportMessagesState((prev) => {
-      if (prev.length === 0) {
-        return prev;
-      }
-
-      const lastMessage = prev[prev.length - 1];
-      if (lastMessage.kind !== 'debug-selected-action') {
-        return prev;
-      }
-
-      return prev.slice(0, -1);
-    });
-    setSupportScrollTarget(null);
   };
 
   // GMチャット：新しいメッセージが来たら自動スクロール
@@ -1646,10 +1617,6 @@ export default function ChatNoir() {
     setSupportSuggestions([]);
     setSelectedModel(DEFAULT_RUNTIME_MODEL);
     setFallbackEnabled(true);
-    isScenarioDebugModeRef.current = false;
-    scenarioDebugSessionRef.current += 1;
-    debugAutomatedMessageRef.current = false;
-    setIsScenarioDebugMode(false);
     gmInputRef.current?.clear();
     supportInputRef.current?.clear();
     setCharactersData([]);
@@ -1781,30 +1748,6 @@ export default function ChatNoir() {
     showToast('送信内容を入力欄へ戻しました');
   };
 
-  const stopScenarioDebugMode = (options: { showToast?: boolean; reason?: string; abortRequests?: boolean } = {}) => {
-    const {
-      showToast: shouldShowToast = true,
-      reason = 'オートプレイを停止しました',
-      abortRequests = true,
-    } = options;
-
-    scenarioDebugSessionRef.current += 1;
-    isScenarioDebugModeRef.current = false;
-    setIsScenarioDebugMode(false);
-
-    if (abortRequests && supportAbortControllerRef.current) {
-      supportAbortControllerRef.current.abort();
-    }
-    if (abortRequests && debugAutomatedMessageRef.current && abortControllerRef.current) {
-      removePendingDebugSupportAction();
-      abortControllerRef.current.abort();
-    }
-
-    if (shouldShowToast) {
-      showToast(reason);
-    }
-  };
-
   const buildInitialPrologueHistory = (prologueOverride?: string): AppMessage[] => {
     const outText = prologueOverride || prologueText || '（※プロローグファイルが読み込まれていません。行動を入力して開始してください）';
 
@@ -1842,9 +1785,6 @@ export default function ChatNoir() {
     const shouldOpenGmModal = parsed.isGmModalOpen === true;
     const shouldOpenSupportSidebar = parsed.isSupportSidebarOpen === true;
     const shouldOpenSupportModal = !shouldOpenSupportSidebar && parsed.isSupportModalOpen === true;
-    isScenarioDebugModeRef.current = false;
-    scenarioDebugSessionRef.current += 1;
-    debugAutomatedMessageRef.current = false;
     setGameState(nextState);
     setOpeningFlowStage(nextOpeningFlowStage);
     setMessages(restoredMessages);
@@ -1891,7 +1831,6 @@ export default function ChatNoir() {
     setIsSupportSidebarOpen(shouldOpenSupportSidebar);
     setIsSupportModalOpen(shouldOpenSupportModal);
     setSupportScrollTarget(null);
-    setIsScenarioDebugMode(false);
     setMapLayers(restoredMapState.layers);
     setCurrentPos(restoredMapState.currentPos || cloneDefaultCurrentPos());
     setActiveLayer(restoredMapState.currentPos?.layer || Object.keys(restoredMapState.layers)[0] || DEFAULT_MAP_LAYER_NAME);
@@ -2362,10 +2301,6 @@ export default function ChatNoir() {
     setSupportMessagesState([]);
     setSupportStorySnapshotsState([]);
     setSupportSuggestions([]);
-    isScenarioDebugModeRef.current = false;
-    scenarioDebugSessionRef.current += 1;
-    debugAutomatedMessageRef.current = false;
-    setIsScenarioDebugMode(false);
     supportInputRef.current?.clear();
     setCharactersData([]);
     setFactsData([]);
@@ -2953,14 +2888,12 @@ ${currentMapJson}
       return null;
     }
 
-    const isScenarioDebugRequest = overrideText === SCENARIO_DEBUG_PROMPT;
     const previousSupportMessages = latestSupportMessagesRef.current;
     const previousSupportStorySnapshots = latestSupportStorySnapshotsRef.current;
 
     const newUserMessage: AppMessage = {
       role: 'user',
       parts: [{ text: textToSend }],
-      kind: isScenarioDebugRequest ? 'debug-request' : undefined,
     };
     const newHistory: AppMessage[] = [...previousSupportMessages, newUserMessage];
     const currentSupportStorySnapshot = buildSupportStorySnapshot();
@@ -3018,10 +2951,9 @@ ${currentMapJson}
         const nextModelMessage: AppMessage = {
           role: 'model',
           parts: [{ text: typeof data.text === 'string' ? data.text : '' }],
-          kind: isScenarioDebugRequest ? 'debug-analysis' : undefined,
         };
         const nextMessages: AppMessage[] = [...newHistory, nextModelMessage];
-        const nextSuggestions = isScenarioDebugRequest ? [] : normalizedSuggestions;
+        const nextSuggestions = normalizedSuggestions;
         setSupportMessagesState(nextMessages);
         setSupportSuggestions(nextSuggestions);
         setSupportScrollTarget(`support-message-${nextMessages.length - 1}`);
@@ -3055,55 +2987,6 @@ ${currentMapJson}
       setIsSupportLoading(false);
       supportAbortControllerRef.current = null;
     }
-  };
-
-  const runScenarioDebugStep = async () => {
-    const debugSessionId = scenarioDebugSessionRef.current;
-    if (!isScenarioDebugModeRef.current || isSupportLoading) return;
-
-    if (!isSupportPersonaReady) {
-      stopScenarioDebugMode({
-        showToast: false,
-        abortRequests: false,
-      });
-      showToast(isSupportPersonaLoading
-        ? 'ロア人格プロンプトの読み込み完了前のため、オートプレイを停止しました'
-        : 'support-personas/lore-support.md を読めないため、オートプレイを停止しました');
-      return;
-    }
-
-    const supportResult = await sendSupportMessage(SCENARIO_DEBUG_PROMPT, { suppressPersonaNotice: true });
-
-    if (!isScenarioDebugModeRef.current || debugSessionId !== scenarioDebugSessionRef.current) {
-      return;
-    }
-
-    const nextInput = supportResult?.action || supportResult?.suggestions[0]?.trim();
-
-    if (!nextInput) {
-      stopScenarioDebugMode({
-        showToast: false,
-        abortRequests: false,
-      });
-      showToast('オートプレイを停止しました。自動入力候補を作れませんでした');
-      return;
-    }
-
-    setSupportMessagesState((prev) => ([
-      ...prev,
-      {
-        role: 'model',
-        parts: [{ text: nextInput }],
-        kind: 'debug-selected-action'
-      }
-    ]));
-    setTimeout(() => scrollSupportToBottom(), 0);
-
-    if (!isScenarioDebugModeRef.current || debugSessionId !== scenarioDebugSessionRef.current) {
-      return;
-    }
-
-    await sendMessage(nextInput, false, { automatedByDebug: true });
   };
 
   // --- セーブ・ロード機能 ---
@@ -3315,19 +3198,6 @@ ${currentMapJson}
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // --- 通常の行動入力 ---
-  const startScenarioDebugMode = () => {
-    if (gameState !== 'PLAYING' || isLoading || isSupportLoading) return;
-
-    scenarioDebugSessionRef.current += 1;
-    isScenarioDebugModeRef.current = true;
-    setIsScenarioDebugMode(true);
-    if (!isSupportSidebarOpen && !isSupportModalOpen) {
-      setIsSupportModalOpen(true);
-    }
-    showToast('オートプレイを開始しました');
-    void runScenarioDebugStep();
-  };
-
   const openEndingOverlay = () => {
     setIsSidebarOpen(false);
     setIsSupportSidebarOpen(false);
@@ -3339,9 +3209,8 @@ ${currentMapJson}
   const sendMessage = async (
     overrideText?: string,
     isGm: boolean = false,
-    options?: { automatedByDebug?: boolean; hiddenUserMessage?: boolean }
+    options?: { hiddenUserMessage?: boolean }
   ) => {
-    const automatedByDebug = options?.automatedByDebug === true;
     const hiddenUserMessage = options?.hiddenUserMessage === true;
     const textToSend = overrideText !== undefined ? overrideText : (chatInputRef.current?.getCurrentText() ?? '');
     if (!textToSend.trim() || isLoading) return;
@@ -3352,7 +3221,7 @@ ${currentMapJson}
     const newHistory: AppMessage[] = [...previousMessages, newUserMsg];
     latestMessagesRef.current = newHistory;
     setMessages(newHistory);
-    setRecoverableSendState(automatedByDebug ? null : { text: textToSend, previousMessages, isGm });
+    setRecoverableSendState({ text: textToSend, previousMessages, isGm });
     
     showLoadingStatus(
       fallbackEnabled
@@ -3360,12 +3229,7 @@ ${currentMapJson}
         : '返答を準備しています。',
     );
     setIsLoading(true);
-    debugAutomatedMessageRef.current = automatedByDebug;
-    // 手動送信時だけ一番下（最新の自分の入力）までスクロールさせる。
-    // オートプレイの自動送信では、読んでいる位置を維持する。
-    if (!automatedByDebug) {
-      setTimeout(() => scrollToBottom(), 100);
-    }
+    setTimeout(() => scrollToBottom(), 100);
 
     abortControllerRef.current = new AbortController();
 
@@ -3400,18 +3264,8 @@ ${currentMapJson}
         if (hasReachedEnding && endingPhase === 'NONE') {
           setEndingPhase('READY_TO_END');
         }
-        if (!isGm) {
-          if (hasReachedEnding && isScenarioDebugModeRef.current) {
-            stopScenarioDebugMode({
-              showToast: false,
-              abortRequests: false,
-            });
-            showToast('オートプレイを停止しました。エンディングに到達しました');
-          } else if (isScenarioDebugModeRef.current) {
-            void runScenarioDebugStep();
-          } else if (isAutoSupportMode && isSupportPersonaReady) {
-            void sendSupportMessage(SUPPORT_SUGGESTION_PROMPT, { suppressPersonaNotice: true });
-          }
+        if (!isGm && isAutoSupportMode && isSupportPersonaReady) {
+          void sendSupportMessage(SUPPORT_SUGGESTION_PROMPT, { suppressPersonaNotice: true });
         }
       } else {
         const errorStr = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
@@ -3433,14 +3287,6 @@ ${currentMapJson}
         setMessages(previousMessages);
         setRecoverableSendState(null);
         restoreTextToInput(textToSend, isGm);
-
-        if (automatedByDebug) {
-          stopScenarioDebugMode({
-            showToast: false,
-            abortRequests: false,
-          });
-          showToast('オートプレイを停止しました。自動送信に失敗しました');
-        }
       }
     } catch (err: unknown) {
       if (isAbortError(err)) {
@@ -3456,20 +3302,9 @@ ${currentMapJson}
       setMessages(previousMessages);
       setRecoverableSendState(null);
       restoreTextToInput(textToSend, isGm);
-
-      if (automatedByDebug && !isAbortError(err)) {
-        stopScenarioDebugMode({
-          showToast: false,
-          abortRequests: false,
-        });
-        showToast('オートプレイを停止しました。自動送信に失敗しました');
-      }
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
-      if (automatedByDebug) {
-        debugAutomatedMessageRef.current = false;
-      }
     }
   };
 
@@ -3717,9 +3552,6 @@ ${currentMapJson}
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '2px', fontSize: isSidebarVariant ? '1.05rem' : '1.2rem' }}>おたすけロアちゃん</h3>
-                {isScenarioDebugMode && (
-                  <span style={{ padding: '0.2rem 0.55rem', borderRadius: '999px', background: 'var(--text-main)', color: 'var(--bg-color)', fontSize: '0.68rem', letterSpacing: '1px', fontWeight: 700 }}>DEBUG RUN</span>
-                )}
               </div>
             </div>
           </div>
@@ -3810,13 +3642,11 @@ ${currentMapJson}
           onSend={() => sendSupportMessage()}
           disabled={isSupportActionDisabled}
           style={{ width: '100%', minHeight: '72px', maxHeight: '140px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit', flexShrink: 0 }}
-          placeholder={isScenarioDebugMode
-            ? 'オートプレイ中です。停止すると手動で相談できます。'
-            : isSupportPersonaLoading
-              ? 'ロア人格プロンプトを読み込み中です。'
-              : supportPersonaLoadError
-                ? 'support-personas/lore-support.md を確認して再読込してください。'
-                : '例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて'}
+          placeholder={isSupportPersonaLoading
+            ? 'ロア人格プロンプトを読み込み中です。'
+            : supportPersonaLoadError
+              ? 'support-personas/lore-support.md を確認して再読込してください。'
+              : '例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて'}
         />
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'stretch', marginBottom: isSidebarVariant ? '1.5rem' : '0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -3838,30 +3668,11 @@ ${currentMapJson}
               自動
             </button>
             </div>
-            {isSupportLoading && !isScenarioDebugMode ? (
+            {isSupportLoading ? (
               <button onClick={stopSupportRequest} style={{ background: 'transparent', color: '#d6b26e', border: '1px solid rgba(214,178,110,0.7)', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer', transition: '0.2s' }}>停止</button>
             ) : (
               <button onClick={() => void sendSupportMessage()} disabled={isSupportActionDisabled} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
             )}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-            <button
-              onClick={isScenarioDebugMode ? () => stopScenarioDebugMode() : () => startScenarioDebugMode()}
-              disabled={!isScenarioDebugMode && (isLoading || isSupportLoading)}
-              style={{
-                background: isScenarioDebugMode ? 'var(--text-main)' : 'transparent',
-                color: isScenarioDebugMode ? 'var(--bg-color)' : 'var(--text-main)',
-                border: '1px solid var(--text-main)',
-                padding: '0.6rem 1rem',
-                borderRadius: '4px',
-                cursor: (!isScenarioDebugMode && (isLoading || isSupportLoading)) ? 'not-allowed' : 'pointer',
-                opacity: (!isScenarioDebugMode && (isLoading || isSupportLoading)) ? 0.5 : 1,
-                fontSize: '0.85rem',
-                fontWeight: 600,
-              }}
-            >
-              {isScenarioDebugMode ? 'オートプレイ停止' : 'オートプレイ'}
-            </button>
           </div>
         </div>
       </div>
@@ -4897,9 +4708,9 @@ ${currentMapJson}
               name="mainMessage"
               className={styles.chatInput}
               style={{ minHeight: '80px', maxHeight: '300px', flex: 1, resize: 'none', padding: '12px' }}
-              placeholder={isScenarioDebugMode ? 'オートプレイ実行中です。停止すると手動入力できます。' : 'Enterで送信、Shift+Enterで改行'}
+              placeholder={'Enterで送信、Shift+Enterで改行'}
               onSend={(text) => { sendMessage(text); }}
-              disabled={isLoading || gameState === 'BRIEFING' || isScenarioDebugMode}
+              disabled={isLoading || gameState === 'BRIEFING'}
             />
             {/* GMモーダル */}
             {isGmModalOpen && (
@@ -5030,7 +4841,7 @@ ${currentMapJson}
               <button
                 className={styles.sendBtn}
                 onClick={() => { const text = chatInputRef.current?.getCurrentText() ?? ''; if (text.trim()) { chatInputRef.current?.clear(); sendMessage(text); } }}
-                disabled={isLoading || gameState === 'BRIEFING' || isScenarioDebugMode}
+                disabled={isLoading || gameState === 'BRIEFING'}
                 style={{ height: '40px', padding: '0 2rem' }}
               >
                 送信
