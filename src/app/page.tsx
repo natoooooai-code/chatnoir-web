@@ -4468,7 +4468,17 @@ ${currentMapJson}
         {endingPhase !== 'REVIEW' && canUseSupportAssistant && isSupportSidebarOpen && renderSupportPanel('sidebar')}
       </aside>
 
-      <main className={styles.mainChat}>
+      <main
+        className={styles.mainChat}
+        style={isMobileLayout && openingFlowStage === 'PROLOGUE'
+          ? {
+              flex: '1 1 auto',
+              height: '100dvh',
+              minHeight: '100dvh',
+              maxHeight: '100dvh',
+            }
+          : undefined}
+      >
         <div
           className={styles.chatHistory}
           ref={scrollRef}
