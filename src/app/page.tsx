@@ -1792,6 +1792,7 @@ export default function ChatNoir() {
     latestMessagesRef.current = pendingSend.previousMessages;
     setMessages(pendingSend.previousMessages);
     setRecoverableSendState(null);
+    clearLoadingStatus();
     restoreTextToInput(pendingSend.text, pendingSend.isGm);
     abortControllerRef.current?.abort();
     showToast('送信内容を入力欄へ戻しました');
@@ -3589,17 +3590,17 @@ ${currentMapJson}
         className="fade-in"
         style={{
           width: isSidebarVariant ? (isMobileLayout ? '100vw' : `${leftSidebarWidth}px`) : 'min(720px, 100%)',
-          height: isSidebarVariant ? '100%' : 'min(90vh, 820px)',
+          height: isSidebarVariant ? '100%' : (isMobileLayout ? '100dvh' : 'min(90vh, 820px)'),
           display: 'flex',
           flexDirection: 'column',
           gap: '1rem',
-          padding: isSidebarVariant ? (isMobileLayout ? '1rem' : '1.5rem') : '2rem',
+          padding: isSidebarVariant ? (isMobileLayout ? 'max(1rem, env(safe-area-inset-top, 0px)) 1rem calc(1rem + env(safe-area-inset-bottom, 0px))' : '1.5rem') : (isMobileLayout ? 'max(1rem, env(safe-area-inset-top, 0px)) 1rem calc(1rem + env(safe-area-inset-bottom, 0px))' : '2rem'),
           flexShrink: 0,
-          background: 'var(--sidebar-bg)',
+          background: isMobileLayout ? 'var(--panel-solid-bg)' : 'var(--sidebar-bg)',
           border: isSidebarVariant ? 'none' : '1px solid var(--border-color)',
-          borderRadius: isSidebarVariant ? '0' : '8px',
+          borderRadius: isMobileLayout ? '0' : (isSidebarVariant ? '0' : '8px'),
           boxShadow: isSidebarVariant ? 'none' : '0 10px 30px rgba(0,0,0,0.5)',
-          backdropFilter: 'blur(10px)',
+          backdropFilter: isMobileLayout ? 'none' : 'blur(10px)',
           overflow: 'hidden'
         }}
       >
@@ -3698,6 +3699,7 @@ ${currentMapJson}
           name="supportMessage"
           onSend={() => sendSupportMessage()}
           disabled={isSupportActionDisabled}
+          sendTrigger="ctrl-enter"
           style={{ width: '100%', minHeight: '72px', maxHeight: '140px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit', flexShrink: 0 }}
           placeholder={isSupportPersonaLoading
             ? 'ロア人格プロンプトを読み込み中です。'
@@ -3706,8 +3708,7 @@ ${currentMapJson}
               : '例：今の状況だと何を調べるとよさそう？ / この人物への聞き方を一緒に考えて'}
         />
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'stretch', marginBottom: isSidebarVariant ? '1.5rem' : '0' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-start', gap: isMobileLayout ? '0.5rem' : '0.75rem', flexWrap: 'nowrap', alignItems: 'center', minWidth: 0 }}>
             <button onClick={() => sendSupportMessage(SUPPORT_SUGGESTION_PROMPT)} disabled={isSupportActionDisabled} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, fontSize: '0.85rem' }}>ロアにおまかせ</button>
             <button
               type="button"
@@ -3724,11 +3725,10 @@ ${currentMapJson}
               </div>
               自動
             </button>
-            </div>
             {isSupportLoading ? (
-              <button onClick={stopSupportRequest} style={{ background: 'transparent', color: '#d6b26e', border: '1px solid rgba(214,178,110,0.7)', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer', transition: '0.2s' }}>停止</button>
+              <button onClick={stopSupportRequest} style={{ background: 'transparent', color: '#d6b26e', border: '1px solid rgba(214,178,110,0.7)', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer', transition: '0.2s', whiteSpace: 'nowrap', flexShrink: 0, minWidth: '84px' }}>中止</button>
             ) : (
-              <button onClick={() => void sendSupportMessage()} disabled={isSupportActionDisabled} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, transition: '0.2s' }}>相談する</button>
+              <button onClick={() => void sendSupportMessage()} disabled={isSupportActionDisabled} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isSupportActionDisabled ? 'not-allowed' : 'pointer', opacity: isSupportActionDisabled ? 0.5 : 1, transition: '0.2s', whiteSpace: 'nowrap', flexShrink: 0, minWidth: '84px' }}>相談</button>
             )}
           </div>
         </div>
@@ -3765,17 +3765,17 @@ ${currentMapJson}
                 待機室
               </h2>
             </div>
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              <button onClick={() => { resetAllState(); setShowLibrarySettings(false); setGameState('LOGIN'); }} style={{ background: '#e0e0e0', color: '#000', border: 'none', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold', letterSpacing: '1px' }}>
+            <div style={{ display: isMobileLayout ? 'grid' : 'flex', gridTemplateColumns: isMobileLayout ? 'repeat(2, minmax(0, 1fr))' : undefined, width: isMobileLayout ? '100%' : undefined, gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button onClick={() => { resetAllState(); setShowLibrarySettings(false); setGameState('LOGIN'); }} style={{ background: '#e0e0e0', color: '#000', border: 'none', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold', letterSpacing: '1px', width: isMobileLayout ? '100%' : undefined }}>
                 新しく遊ぶ
               </button>
-              <button onClick={handleLoadData} style={{ background: 'transparent', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px' }}>
+              <button onClick={handleLoadData} style={{ background: 'transparent', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', width: isMobileLayout ? '100%' : undefined }}>
                 ファイルから読み込み
               </button>
-              <button onClick={() => setShowLibrarySettings((prev) => !prev)} style={{ background: showLibrarySettings ? '#262626' : '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px' }}>
+              <button onClick={() => setShowLibrarySettings((prev) => !prev)} style={{ background: showLibrarySettings ? '#262626' : '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', width: isMobileLayout ? '100%' : undefined }}>
                 {showLibrarySettings ? '設定を閉じる' : 'AIの設定'}
               </button>
-              <button onClick={() => { setShowLibrarySettings(false); setGameState('WELCOME'); }} style={{ background: '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', transition: 'all 0.2s' }}>
+              <button onClick={() => { setShowLibrarySettings(false); setGameState('WELCOME'); }} style={{ background: '#1a1a1a', color: '#ccc', border: '1px solid #333', padding: '0.7rem 1.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', letterSpacing: '1px', transition: 'all 0.2s', width: isMobileLayout ? '100%' : undefined }}>
                 トップ画面へ戻る
               </button>
             </div>
@@ -4329,7 +4329,9 @@ ${currentMapJson}
           --text-muted: ${theme === 'dark' ? '#aaa' : '#666'};
           --border-color: ${theme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'};
           --sidebar-bg: ${theme === 'dark' ? 'rgba(25, 25, 25, 0.85)' : 'rgba(250, 250, 250, 0.85)'};
+          --panel-solid-bg: ${theme === 'dark' ? '#181818' : '#f7f7f7'};
           --chat-input-bg: ${theme === 'dark' ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)'};
+          --input-area-bg: ${theme === 'dark' ? 'linear-gradient(to top, #121212 0%, rgba(18, 18, 18, 0.98) 100%)' : 'linear-gradient(to top, #fafafa 0%, rgba(255, 255, 255, 0.96) 100%)'};
           --app-font: ${fontFamily === 'serif' ? 'var(--font-serif)' : fontFamily === 'sans' ? 'var(--font-sans)' : 'var(--font-klee)'};
           --app-font-size: ${fontSize}px;
           --ui-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -4382,7 +4384,7 @@ ${currentMapJson}
       ) : null}
 
       {/* 感想戦 / ロア相談（左サイドバー） */}
-      <aside style={{ position: isMobileLayout ? 'fixed' : 'relative', left: isMobileLayout ? 0 : undefined, right: isMobileLayout ? 0 : undefined, bottom: isMobileLayout ? 0 : undefined, width: isMobileLayout ? '100vw' : (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? `${leftSidebarWidth}px` : '0px', height: isMobileLayout ? ((endingPhase === 'REVIEW' || isSupportSidebarOpen) ? 'min(74vh, 720px)' : '0px') : undefined, transition: leftDragRef.current ? 'none' : (isMobileLayout ? 'height 0.26s ease' : 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)'), overflow: 'hidden', background: 'var(--sidebar-bg)', borderRight: !isMobileLayout && (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? '1px solid var(--border-color)' : 'none', borderTop: isMobileLayout && (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? '1px solid var(--border-color)' : 'none', display: 'flex', flexDirection: 'column', zIndex: isMobileLayout ? 180 : 10, pointerEvents: (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? 'auto' : 'none', borderTopLeftRadius: isMobileLayout ? '20px' : undefined, borderTopRightRadius: isMobileLayout ? '20px' : undefined, boxShadow: isMobileLayout && (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? '0 -18px 50px rgba(0,0,0,0.24)' : undefined }}>
+      <aside style={{ position: isMobileLayout ? 'fixed' : 'relative', top: isMobileLayout ? 0 : undefined, left: isMobileLayout ? 0 : undefined, right: isMobileLayout ? 0 : undefined, bottom: isMobileLayout ? 0 : undefined, width: isMobileLayout ? '100vw' : (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? `${leftSidebarWidth}px` : '0px', height: isMobileLayout ? ((endingPhase === 'REVIEW' || isSupportSidebarOpen) ? '100dvh' : '0px') : undefined, transition: leftDragRef.current ? 'none' : (isMobileLayout ? 'height 0.26s ease' : 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)'), overflow: 'hidden', background: isMobileLayout ? 'var(--panel-solid-bg)' : 'var(--sidebar-bg)', borderRight: !isMobileLayout && (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? '1px solid var(--border-color)' : 'none', borderTop: isMobileLayout ? 'none' : undefined, display: 'flex', flexDirection: 'column', zIndex: isMobileLayout ? 180 : 10, pointerEvents: (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? 'auto' : 'none', borderTopLeftRadius: isMobileLayout ? '0' : undefined, borderTopRightRadius: isMobileLayout ? '0' : undefined, boxShadow: isMobileLayout && (endingPhase === 'REVIEW' || isSupportSidebarOpen) ? 'none' : undefined }}>
         <div
           onMouseDown={() => { leftDragRef.current = true; document.body.style.cursor = 'ew-resize'; document.body.style.userSelect = 'none'; }}
           style={{ position: 'absolute', top: 0, right: 0, width: '6px', height: '100%', cursor: 'ew-resize', zIndex: 100, background: 'transparent', display: isMobileLayout ? 'none' : 'block' }}
@@ -4423,12 +4425,12 @@ ${currentMapJson}
                 value={reviewInputText}
                 onChange={e => setReviewInputText(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault();
                     sendReviewMessage();
                   }
                 }}
-                placeholder="GMに質問する... (Enterで送信、Shift+Enterで改行)"
+                placeholder={isMobileLayout ? 'GMに質問... (Enterで改行、送信は下のボタン)' : 'GMに質問... (Enterで改行、Ctrl+Enterで送信)'}
                 style={{ width: '100%', background: 'var(--chat-input-bg)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '0.8rem', borderRadius: '4px', minHeight: '60px', fontFamily: 'inherit', resize: 'vertical', fontSize: '0.9rem' }}
               />
               <button onClick={() => sendReviewMessage()} disabled={isLoading || !reviewInputText.trim()} style={{ width: '100%', background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.8rem', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', letterSpacing: '2px', opacity: (isLoading || !reviewInputText.trim()) ? 0.5 : 1, fontSize: '0.9rem' }}>
@@ -4573,13 +4575,13 @@ ${currentMapJson}
           </button>
         )}
 
-        {/* フローティング「おたすけを開く」ボタン */}
+        {/* フローティング「ロアに相談」ボタン */}
         {!isMobileLayout && !isSupportSidebarOpen && !isSupportModalOpen && endingPhase !== 'REVIEW' && canUseSupportAssistant && (
           <button
             onClick={openSupportPanel}
             style={{ position: 'fixed', top: isMobileLayout ? 'auto' : '20px', bottom: isMobileLayout ? '84px' : 'auto', left: isMobileLayout ? '16px' : '0', background: '#333', color: '#fff', padding: isMobileLayout ? '10px 14px' : '14px 10px 16px 8px', borderRadius: isMobileLayout ? '999px' : '0 24px 24px 0', border: 'none', cursor: 'pointer', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', writingMode: isMobileLayout ? 'horizontal-tb' : 'vertical-rl', textOrientation: 'mixed', boxShadow: '2px 2px 10px rgba(0,0,0,0.2)', fontSize: '0.8rem', letterSpacing: '1px', minHeight: isMobileLayout ? 'auto' : '150px' }}
           >
-            おたすけを開く
+            ロアに相談
           </button>
         )}
 
@@ -4688,7 +4690,7 @@ ${currentMapJson}
                         }} />
                       </div>
                     </div>
-                    <select name="fontFamily" value={fontFamily} onChange={e => setFontFamily(e.target.value as FontFamily)} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px' }}>
+                    <select name="fontFamily" value={fontFamily} onChange={e => setFontFamily(e.target.value as FontFamily)} style={{ background: 'var(--panel-solid-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px' }}>
                       <option value="serif">明朝体 (Serif)</option>
                       <option value="sans">ゴシック体 (Sans)</option>
                       <option value="klee">手書き風 (Klee One)</option>
@@ -4730,7 +4732,7 @@ ${currentMapJson}
                     </div>
                     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>AIモデル</p>
-                      <select name="runtimeModel" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                      <select name="runtimeModel" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--panel-solid-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
                         {RUNTIME_MODEL_OPTIONS.map((option) => (
                           <option key={option.value} value={option.value}>{option.compactLabel}</option>
                         ))}
@@ -4754,7 +4756,7 @@ ${currentMapJson}
                     )}
                     {isMobileLayout ? (
                       <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <button onClick={() => { setShowSettings(false); setIsGmModalOpen(true); }} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>GMに質問する</button>
+                        <button onClick={() => { setShowSettings(false); setIsGmModalOpen(true); }} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>GMに質問</button>
                       </div>
                     ) : null}
                     <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>待機室へ</button>
@@ -4769,8 +4771,8 @@ ${currentMapJson}
 
                   if (isMobileLayout) {
                     return (
-                      <div onClick={() => setShowSettings(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.32)', zIndex: 240, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '16px 12px calc(16px + env(safe-area-inset-bottom, 0px))' }}>
-                        <div onClick={(event) => event.stopPropagation()} style={{ width: '100%', maxWidth: '560px', background: 'var(--sidebar-bg)', border: `1px solid var(--border-color)`, borderRadius: '20px 20px 0 0', padding: '1rem 1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: 'min(72vh, 680px)', overflowY: 'auto', boxShadow: '0 -18px 48px rgba(15, 23, 42, 0.18)' }}>
+                      <div onClick={() => setShowSettings(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.52)', zIndex: 240, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '16px 12px calc(16px + env(safe-area-inset-bottom, 0px))' }}>
+                        <div onClick={(event) => event.stopPropagation()} style={{ width: '100%', maxWidth: '560px', background: 'var(--panel-solid-bg)', border: `1px solid var(--border-color)`, borderRadius: '20px 20px 0 0', padding: '1rem 1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: 'min(72vh, 680px)', overflowY: 'auto', boxShadow: '0 -18px 48px rgba(15, 23, 42, 0.18)' }}>
                           {settingsContent}
                         </div>
                       </div>
@@ -4778,7 +4780,7 @@ ${currentMapJson}
                   }
 
                   return (
-                    <div style={{ position: 'absolute', bottom: '100%', left: '0', marginBottom: '8px', background: 'var(--sidebar-bg)', border: `1px solid var(--border-color)`, padding: '1rem', borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '0.8rem', zIndex: 200, minWidth: '220px', maxWidth: '320px', maxHeight: 'min(70vh, 560px)', overflowY: 'auto', boxShadow: '0 -4px 10px rgba(0,0,0,0.1)' }}>
+                    <div style={{ position: 'absolute', bottom: '100%', left: '0', marginBottom: '8px', background: 'var(--panel-solid-bg)', border: `1px solid var(--border-color)`, padding: '1rem', borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '0.8rem', zIndex: 200, minWidth: '220px', maxWidth: '320px', maxHeight: 'min(70vh, 560px)', overflowY: 'auto', boxShadow: '0 -4px 10px rgba(0,0,0,0.1)' }}>
                       {settingsContent}
                     </div>
                   );
@@ -4788,12 +4790,12 @@ ${currentMapJson}
               <button onClick={() => insertTags('「', '」')} style={isMobileLayout ? { minHeight: '34px', fontSize: '0.74rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0 10px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, touchAction: 'manipulation' } : { fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, touchAction: 'manipulation' }}>「」セリフ</button>
               {!isMobileLayout ? <button onClick={openSupportModal} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', flexShrink: 0, touchAction: 'manipulation' }}>
                 <img src={resolvePublicAssetPath(SUPPORT_AVATAR_PATH)} alt="ロア" style={{ width: '18px', height: '18px', borderRadius: '999px', objectFit: 'cover' }} />
-                ロアに相談する
+                ロアに相談
               </button> : null}
-              {!isMobileLayout ? <button onClick={() => setIsGmModalOpen(true)} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, touchAction: 'manipulation' }}>GMに質問する</button> : null}
+              {!isMobileLayout ? <button onClick={() => setIsGmModalOpen(true)} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, touchAction: 'manipulation' }}>GMに質問</button> : null}
               {isMobileLayout && !isSupportSidebarOpen && endingPhase !== 'REVIEW' && canUseSupportAssistant ? (
                 <button onClick={openSupportPanel} style={{ minHeight: '34px', fontSize: '0.74rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0 10px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, touchAction: 'manipulation' }}>
-                    おたすけを開く
+                    ロアに相談
                   </button>
               ) : null}
               {isMobileLayout && !isSidebarOpen && canUseNotebookSidebar ? (
@@ -4804,13 +4806,14 @@ ${currentMapJson}
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: isMobileLayout ? '0.45rem' : '1rem', width: '100%', alignItems: 'flex-end', flexDirection: 'row' }}>
+          <div style={{ display: 'flex', gap: isMobileLayout ? '0.45rem' : '1rem', width: '100%', alignItems: 'stretch', flexDirection: 'row' }}>
             <ChatInput
               ref={chatInputRef}
               name="mainMessage"
               className={styles.chatInput}
-              style={{ minHeight: isMobileLayout ? '52px' : '80px', maxHeight: isMobileLayout ? '112px' : '300px', flex: 1, resize: 'none', padding: isMobileLayout ? '10px 12px' : '12px', width: '100%' }}
-              placeholder={'Enterで送信、Shift+Enterで改行'}
+              sendTrigger="ctrl-enter"
+              style={{ minHeight: '80px', maxHeight: isMobileLayout ? '112px' : '300px', flex: 1, resize: 'none', padding: isMobileLayout ? '10px 12px' : '12px', width: '100%' }}
+              placeholder={isMobileLayout ? 'Enterで改行、送信は右のボタン' : 'Enterで改行、Ctrl+Enterで送信'}
               onSend={(text) => { sendMessage(text); }}
               disabled={isLoading || gameState === 'BRIEFING'}
             />
@@ -4861,14 +4864,19 @@ ${currentMapJson}
                     name="gmMessage"
                     onSend={(text) => { sendMessage(text, true); }}
                     disabled={isLoading}
+                    sendTrigger="ctrl-enter"
                     style={{ width: '100%', minHeight: '80px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit' }}
-                    placeholder="例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Enterで送信、改行はShift+Enter)"
+                    placeholder={isMobileLayout ? '例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Enterで改行、送信は下のボタン)' : '例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Enterで改行、Ctrl+Enterで送信)'}
                   />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                    {recoverableSend?.isGm && isLoading && (
-                      <button onClick={restoreLastSentMessage} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0.6rem 1.2rem', borderRadius: '4px', cursor: 'pointer' }}>中止</button>
-                    )}
-                    <button onClick={() => { const t = gmInputRef.current?.getCurrentText() ?? ''; if (t.trim()) { gmInputRef.current?.clear(); sendMessage(t, true); } }} disabled={isLoading} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', opacity: isLoading ? 0.5 : 1, transition: '0.2s' }}>送信する</button>
+                    <button onClick={() => {
+                      if (recoverableSend?.isGm && isLoading) {
+                        restoreLastSentMessage();
+                        return;
+                      }
+                      const t = gmInputRef.current?.getCurrentText() ?? '';
+                      if (t.trim()) { gmInputRef.current?.clear(); sendMessage(t, true); }
+                    }} disabled={isLoading && !recoverableSend?.isGm} style={{ background: recoverableSend?.isGm && isLoading ? 'transparent' : 'var(--text-main)', color: recoverableSend?.isGm && isLoading ? 'var(--text-main)' : 'var(--bg-color)', border: recoverableSend?.isGm && isLoading ? '1px solid var(--border-color)' : 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: isLoading && !recoverableSend?.isGm ? 'not-allowed' : 'pointer', opacity: isLoading && !recoverableSend?.isGm ? 0.5 : 1, transition: '0.2s' }}>{recoverableSend?.isGm && isLoading ? '中止' : '送信する'}</button>
                   </div>
                 </div>
               </div>
@@ -4908,9 +4916,9 @@ ${currentMapJson}
 
             {renderGlobalModals()}
 
-            <div style={{ position: 'relative', display: 'flex', alignItems: 'stretch', width: isMobileLayout ? '108px' : 'auto', flexWrap: 'nowrap', gap: isMobileLayout ? '6px' : '0', flexDirection: isMobileLayout ? 'column' : 'row' }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'stretch', width: isMobileLayout ? '104px' : '148px', flexWrap: 'nowrap', gap: isMobileLayout ? '6px' : '8px', flexDirection: 'column', justifyContent: isMobileLayout ? 'flex-start' : 'space-between', alignSelf: isMobileLayout ? 'stretch' : 'flex-end', minHeight: isMobileLayout ? undefined : '80px' }}>
               {!isMobileLayout ? (
-              <div style={{ position: 'absolute', top: '-45px', right: '0', width: '100%', display: 'flex', gap: '5px', zIndex: 10 }}>
+              <div style={{ width: '100%', display: 'flex', gap: '5px', zIndex: 10 }}>
                 {/* 最新へ（左側） */}
                 <button
                   onClick={scrollToBottom}
@@ -4942,41 +4950,45 @@ ${currentMapJson}
                 </button>
               </div>
               ) : null}
-              <button
-                className={styles.sendBtn}
-                onClick={() => { const text = chatInputRef.current?.getCurrentText() ?? ''; if (text.trim()) { chatInputRef.current?.clear(); sendMessage(text); } }}
-                disabled={isLoading || gameState === 'BRIEFING'}
-                style={{ height: '40px', padding: isMobileLayout ? '0 0.9rem' : '0 2rem', width: isMobileLayout ? '100%' : undefined, touchAction: 'manipulation' }}
-              >
-                送信
-              </button>
-              {recoverableSend && !recoverableSend.isGm && isLoading && (
+              <div style={{ display: 'flex', gap: isMobileLayout ? '6px' : '8px', width: '100%', alignItems: 'stretch', flexDirection: isMobileLayout ? 'column' : 'row' }}>
                 <button
-                  onClick={restoreLastSentMessage}
-                  style={{ height: isMobileLayout ? '36px' : '40px', padding: '0 1rem', background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap', width: isMobileLayout ? '100%' : undefined, touchAction: 'manipulation' }}
+                  className={styles.sendBtn}
+                  onClick={() => {
+                    if (recoverableSend && !recoverableSend.isGm && isLoading) {
+                      restoreLastSentMessage();
+                      return;
+                    }
+                    const text = chatInputRef.current?.getCurrentText() ?? '';
+                    if (text.trim()) {
+                      chatInputRef.current?.clear();
+                      sendMessage(text);
+                    }
+                  }}
+                  disabled={(isLoading && !(recoverableSend && !recoverableSend.isGm)) || gameState === 'BRIEFING'}
+                  style={{ height: isMobileLayout ? '40px' : '36px', padding: isMobileLayout ? '0 0.9rem' : '0 1.2rem', width: isMobileLayout ? '100%' : undefined, flex: isMobileLayout ? undefined : 1, touchAction: 'manipulation', background: recoverableSend && !recoverableSend.isGm && isLoading ? 'transparent' : undefined, color: recoverableSend && !recoverableSend.isGm && isLoading ? 'var(--text-main)' : undefined, border: recoverableSend && !recoverableSend.isGm && isLoading ? '1px solid var(--border-color)' : undefined, letterSpacing: isMobileLayout ? undefined : '2px' }}
                 >
-                  中止
+                  {recoverableSend && !recoverableSend.isGm && isLoading ? '中止' : '送信'}
                 </button>
-              )}
-              {/* 再生成ボタン */}
-              {(() => {
-                let latestModelIndex = -1;
-                for (let i = messages.length - 1; i >= 0; i--) {
-                  if (messages[i].role === 'model' && !messages[i].isGm) { latestModelIndex = i; break; }
-                }
-                return latestModelIndex >= 0 ? (
-                  <button
-                    onClick={() => regenerateMessageRef.current?.(latestModelIndex)}
-                    disabled={isLoading}
-                    title="直前のAI出力を再生成する"
-                    style={{ height: isMobileLayout ? '34px' : '40px', fontSize: '1.1rem', color: 'var(--text-muted)', background: 'transparent', border: isMobileLayout ? '1px solid var(--border-color)' : 'none', padding: isMobileLayout ? '0 12px' : '0 8px', cursor: isLoading ? 'not-allowed' : 'pointer', opacity: 0.45, transition: 'opacity 0.2s', flexShrink: 0, width: isMobileLayout ? '100%' : undefined, borderRadius: isMobileLayout ? '8px' : undefined, touchAction: 'manipulation' }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.opacity = '0.9'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.opacity = '0.45'; }}
-                  >
-                    ↺
-                  </button>
-                ) : null;
-              })()}
+                {/* 再生成ボタン */}
+                {(() => {
+                  let latestModelIndex = -1;
+                  for (let i = messages.length - 1; i >= 0; i--) {
+                    if (messages[i].role === 'model' && !messages[i].isGm) { latestModelIndex = i; break; }
+                  }
+                  return latestModelIndex >= 0 ? (
+                    <button
+                      onClick={() => regenerateMessageRef.current?.(latestModelIndex)}
+                      disabled={isLoading}
+                      title="直前のAI出力を再生成する"
+                      style={{ height: isMobileLayout ? '34px' : '36px', fontSize: '1.1rem', color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border-color)', padding: isMobileLayout ? '0 12px' : '0 10px', cursor: isLoading ? 'not-allowed' : 'pointer', opacity: 0.45, transition: 'opacity 0.2s', flexShrink: 0, width: isMobileLayout ? '100%' : '40px', borderRadius: '8px', touchAction: 'manipulation' }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.opacity = '0.9'; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.opacity = '0.45'; }}
+                    >
+                      ↺
+                    </button>
+                  ) : null;
+                })()}
+              </div>
             </div>
           </div>
         </div>
@@ -4985,29 +4997,29 @@ ${currentMapJson}
       {/* 地図モーダル */}
       {isMapModalOpen && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)' }}>
-          <div className="fade-in" style={{ background: '#fff', width: '90%', height: '90%', borderRadius: '12px', border: '1px solid rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', writingMode: 'horizontal-tb', textOrientation: 'mixed' }}>
+          <div className="fade-in" style={{ background: '#fff', width: isMobileLayout ? '100vw' : '90%', height: isMobileLayout ? '100dvh' : '90%', borderRadius: isMobileLayout ? '0' : '12px', border: '1px solid rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.3)', writingMode: 'horizontal-tb', textOrientation: 'mixed' }}>
             {/* ヘッダー */}
-            <div style={{ padding: '1rem 2rem', borderBottom: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.02)' }}>
-              <div>
+            <div style={{ padding: isMobileLayout ? '0.9rem 0.85rem' : '1rem 2rem', borderBottom: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: isMobileLayout ? 'flex-start' : 'center', gap: '0.75rem', flexWrap: isMobileLayout ? 'wrap' : 'nowrap', background: 'rgba(0,0,0,0.02)' }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
                 <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#111', letterSpacing: '4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <IconMap size={24} /> MAP <BetaBadge />
                 </h2>
                 <p style={{ margin: 0, fontSize: '0.7rem', color: '#666', marginTop: '4px' }}>現在地：{currentNodeLabel || currentPos.nodeId} - レイヤー: {currentPos.layer}</p>
               </div>
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <button 
                   onClick={() => requestSpecialCommand('map')} 
                   disabled={isLoading}
-                  style={{ background: '#111', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: '0.7rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '0.5rem', opacity: isLoading ? 0.6 : 1, whiteSpace: 'nowrap', writingMode: 'horizontal-tb', textOrientation: 'mixed' }}
+                  style={{ background: '#111', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: '0.7rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', opacity: isLoading ? 0.6 : 1, whiteSpace: 'nowrap', writingMode: 'horizontal-tb', textOrientation: 'mixed' }}
                 >
                   {isMapUpdating ? <><IconRefresh size={12} /> 更新中…</> : <><IconRefresh size={12} /> 更新</>}
                 </button>
-                <button onClick={() => { setIsMapLegendExpanded(false); setIsMapModalOpen(false); }} style={{ ...CLOSE_BUTTON_STYLE, marginLeft: '1rem' }}>閉じる</button>
+                <button onClick={() => { setIsMapLegendExpanded(false); setIsMapModalOpen(false); }} style={CLOSE_BUTTON_STYLE}>閉じる</button>
               </div>
             </div>
 
             {/* レイヤータブ */}
-            <div style={{ display: 'flex', background: 'rgba(0,0,0,0.03)', padding: isMobileLayout ? '0 0.9rem' : '0 2rem', borderBottom: '1px solid rgba(0,0,0,0.1)', gap: '10px', overflowX: 'auto' }}>
+            <div style={{ display: 'flex', background: 'rgba(0,0,0,0.03)', padding: isMobileLayout ? '0 0.75rem' : '0 2rem', borderBottom: '1px solid rgba(0,0,0,0.1)', gap: '10px', overflowX: 'auto' }}>
               {getMapLayerNames(mapLayers).map(layerName => (
                 <button
                   key={layerName}
@@ -5089,7 +5101,7 @@ ${currentMapJson}
             </div>
 
             {/* フッター */}
-            <div style={{ padding: '0.8rem 2rem', background: 'rgba(0,0,0,0.03)', borderTop: '1px solid rgba(0,0,0,0.1)', color: '#888', fontSize: '0.7rem', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ padding: isMobileLayout ? '0.7rem 0.85rem' : '0.8rem 2rem', background: 'rgba(0,0,0,0.03)', borderTop: '1px solid rgba(0,0,0,0.1)', color: '#888', fontSize: '0.7rem', display: 'flex', justifyContent: 'flex-end' }}>
               <span>ドラッグで移動、ホイールで拡大縮小</span>
             </div>
           </div>
@@ -5103,70 +5115,39 @@ ${currentMapJson}
           position: isMobileLayout ? 'fixed' : 'relative', 
           left: isMobileLayout ? 0 : undefined,
           right: isMobileLayout ? 0 : undefined,
+          top: isMobileLayout ? 0 : undefined,
           bottom: isMobileLayout ? 0 : undefined,
           width: isMobileLayout ? '100vw' : (isSidebarOpen && canUseNotebookSidebar) ? `${sidebarWidth}px` : '0px', 
-          height: isMobileLayout ? ((isSidebarOpen && canUseNotebookSidebar) ? 'min(72vh, 680px)' : '0px') : undefined,
+          height: isMobileLayout ? ((isSidebarOpen && canUseNotebookSidebar) ? '100dvh' : '0px') : undefined,
           visibility: (isSidebarOpen && canUseNotebookSidebar) ? 'visible' : 'hidden',
           padding: 0, 
           overflowY: 'hidden', 
+          background: isMobileLayout ? 'var(--panel-solid-bg)' : undefined,
           overflowX: 'hidden', 
           borderLeft: !isMobileLayout && (isSidebarOpen && canUseNotebookSidebar) ? '1px solid var(--border-color)' : 'none', 
-          borderTop: isMobileLayout && (isSidebarOpen && canUseNotebookSidebar) ? '1px solid var(--border-color)' : 'none', 
+          borderTop: isMobileLayout ? 'none' : undefined, 
           transition: dragRef.current ? 'none' : (isMobileLayout ? 'height 0.26s ease' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'), 
-          opacity: (isSidebarOpen && canUseNotebookSidebar) ? (isAnySidebarUpdating ? 0.6 : 1) : 0, 
-          pointerEvents: isAnySidebarUpdating ? 'none' : ((isSidebarOpen && canUseNotebookSidebar) ? 'auto' : 'none'),
+          opacity: (isSidebarOpen && canUseNotebookSidebar) ? 1 : 0, 
+          pointerEvents: (isSidebarOpen && canUseNotebookSidebar) ? 'auto' : 'none',
           display: 'flex', 
           flexDirection: 'column',
           zIndex: isMobileLayout ? 190 : undefined,
-          borderTopLeftRadius: isMobileLayout ? '20px' : undefined,
-          borderTopRightRadius: isMobileLayout ? '20px' : undefined,
-          boxShadow: isMobileLayout && (isSidebarOpen && canUseNotebookSidebar) ? '0 -18px 50px rgba(0,0,0,0.24)' : undefined
+          borderTopLeftRadius: isMobileLayout ? '0' : undefined,
+          borderTopRightRadius: isMobileLayout ? '0' : undefined,
+          boxShadow: isMobileLayout && (isSidebarOpen && canUseNotebookSidebar) ? 'none' : undefined
         }}
       >
-        {/* 更新中オーバーレイ（スクロールの影響を受けないよう外側に配置） */}
-        {isAnySidebarUpdating && (
-          <div style={{ 
-            position: 'absolute', 
-            top: 0, left: 0, right: 0, bottom: 0, 
-            background: 'rgba(0,0,0,0.2)', 
-            backdropFilter: 'blur(4px)',
-            zIndex: 1000, 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            pointerEvents: 'all'
-          }}>
-            <div style={{ 
-              background: 'var(--sidebar-bg)', 
-              padding: '10px 24px', 
-              borderRadius: '24px', 
-              fontSize: '0.75rem', 
-              color: 'var(--text-main)', 
-              border: '2px solid var(--border-color)',
-              boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
-              letterSpacing: '2px',
-              fontWeight: 'bold',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px'
-            }}>
-              <IconRefresh size={14} />
-              <span>情報更新中...</span>
-            </div>
-          </div>
-        )}
-
         <div
           onMouseDown={() => { dragRef.current = true; document.body.style.cursor = 'ew-resize'; document.body.style.userSelect = 'none'; }}
           style={{ position: 'absolute', top: 0, left: 0, width: '6px', height: '100%', cursor: 'ew-resize', zIndex: 100, background: 'transparent', display: isMobileLayout ? 'none' : 'block' }}
         />
 
         {/* 固定ヘッダー */}
-        <div style={{ flexShrink: 0, background: 'var(--sidebar-bg)', zIndex: 40, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', padding: '0.8rem 1.5rem' }}>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => toggleAllSections(true)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px' }}>一括展開</button>
-            <button onClick={() => toggleAllSections(false)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px' }}>一括折りたたみ</button>
-            <button onClick={() => { setIsMapLegendExpanded(false); setIsMapModalOpen(true); }} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'var(--text-main)', border: 'none', borderRadius: '4px', cursor: 'pointer', color: 'var(--bg-color)', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div style={{ flexShrink: 0, background: isMobileLayout ? 'var(--panel-solid-bg)' : 'var(--sidebar-bg)', zIndex: 40, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', borderBottom: '1px solid var(--border-color)', padding: isMobileLayout ? '0.9rem 1rem' : '0.8rem 1.5rem' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', minWidth: 0, overflowX: isMobileLayout ? 'auto' : 'visible', flex: 1 }}>
+            <button onClick={() => toggleAllSections(true)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px', whiteSpace: 'nowrap', flexShrink: 0 }}>一括展開</button>
+            <button onClick={() => toggleAllSections(false)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px', whiteSpace: 'nowrap', flexShrink: 0 }}>一括折りたたみ</button>
+            <button onClick={() => { setIsMapLegendExpanded(false); setIsMapModalOpen(true); }} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'var(--text-main)', border: 'none', borderRadius: '4px', cursor: 'pointer', color: 'var(--bg-color)', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', flexShrink: 0, justifyContent: 'center' }}>
               <IconMap size={12} /> {isMapUpdating ? '地図（更新中…）' : '地図'}
             </button>
           </div>
@@ -5180,6 +5161,38 @@ ${currentMapJson}
 
         {/* スクロール可能なメインコンテンツ */}
         <div style={{ flexGrow: 1, overflowY: 'auto', padding: '2rem 2rem 4rem 2.5rem', display: 'flex', flexDirection: 'column', gap: '4rem', scrollBehavior: 'smooth', position: 'relative' }}>
+          {isAnySidebarUpdating && (
+            <div style={{ 
+              position: 'absolute', 
+              top: 0, left: 0, right: 0, bottom: 0, 
+              background: 'rgba(0,0,0,0.2)', 
+              backdropFilter: 'blur(4px)',
+              zIndex: 1000, 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              pointerEvents: 'all'
+            }}>
+              <div style={{ 
+                background: isMobileLayout ? 'var(--panel-solid-bg)' : 'var(--sidebar-bg)', 
+                padding: '10px 24px', 
+                borderRadius: '24px', 
+                fontSize: '0.75rem', 
+                color: 'var(--text-main)', 
+                border: '2px solid var(--border-color)',
+                boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+                letterSpacing: '2px',
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px'
+              }}>
+                <IconRefresh size={14} />
+                <span>情報更新中...</span>
+              </div>
+            </div>
+          )}
+
           {/* プレイヤーメモ */}
           <div className={styles.sidebarSection}>
             <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

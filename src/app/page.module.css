@@ -410,12 +410,13 @@
   }
 
   .mainChat {
+    padding-bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));
     min-height: 100vh;
   }
 
   .chatHistory {
     padding: 1.5rem 1rem 1rem;
-    padding-bottom: 8.75rem;
+    padding-bottom: 1.5rem;
     line-height: 1.95;
   }
 
@@ -435,7 +436,7 @@
     right: 0;
     bottom: 0;
     padding: 0.5rem 0.625rem 0.625rem;
-    background: linear-gradient(to top, var(--bg-color) 0%, rgba(255, 255, 255, 0.88) 100%);
+    background: var(--input-area-bg);
     border-top: 1px solid var(--border-color);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -488,7 +489,7 @@
 
   .chatHistory {
     padding: 1rem 0.75rem 0.75rem;
-    padding-bottom: 8.5rem;
+    padding-bottom: 1rem;
   }
 
   .messageRow {
