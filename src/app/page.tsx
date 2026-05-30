@@ -2449,6 +2449,10 @@ export default function ChatNoir() {
     setOpeningFlowStage('INTRODUCTION');
   };
 
+  const closeIntroduction = () => {
+    setOpeningFlowStage('PROLOGUE');
+  };
+
   // プレイヤーがプロローグを読み終え、「物語に入る」を押した時の処理
   const startPhase2 = async () => {
     setOpeningFlowStage('MAIN');
@@ -4675,7 +4679,7 @@ ${currentMapJson}
         )}
 
         {/* 入力欄（ブリーフィング、エンディング演出中は非表示） */}
-        <div className={styles.inputArea} style={{ display: (gameState === 'BRIEFING' || endingPhase === 'FADE_OUT' || endingPhase === 'MENU' || endingPhase === 'REVIEW') ? 'none' : 'flex', flexDirection: 'column', gap: isMobileLayout ? '0.5rem' : '8px', zIndex: isMobileLayout ? 140 : 100, position: isMobileLayout ? 'fixed' : undefined, left: isMobileLayout ? 0 : undefined, right: isMobileLayout ? 0 : undefined, bottom: isMobileLayout ? 0 : undefined, width: isMobileLayout ? '100%' : undefined, maxWidth: isMobileLayout ? '100vw' : undefined, paddingBottom: isMobileLayout ? 'calc(0.625rem + env(safe-area-inset-bottom, 0px))' : undefined, boxShadow: isMobileLayout ? '0 -16px 36px rgba(15, 23, 42, 0.12)' : undefined }}>
+        <div className={styles.inputArea} style={{ display: (gameState === 'BRIEFING' || openingFlowStage === 'PROLOGUE' || endingPhase === 'FADE_OUT' || endingPhase === 'MENU' || endingPhase === 'REVIEW') ? 'none' : 'flex', flexDirection: 'column', gap: isMobileLayout ? '0.5rem' : '8px', zIndex: isMobileLayout ? 140 : 100, position: isMobileLayout ? 'fixed' : undefined, left: isMobileLayout ? 0 : undefined, right: isMobileLayout ? 0 : undefined, bottom: isMobileLayout ? 0 : undefined, width: isMobileLayout ? '100%' : undefined, maxWidth: isMobileLayout ? '100vw' : undefined, paddingBottom: isMobileLayout ? 'calc(0.625rem + env(safe-area-inset-bottom, 0px))' : undefined, boxShadow: isMobileLayout ? '0 -16px 36px rgba(15, 23, 42, 0.12)' : undefined }}>
 
           {/* 入力補助・特殊コマンドボタン */}
           <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center', flexDirection: 'row', gap: '8px' }}>
@@ -4905,12 +4909,13 @@ ${currentMapJson}
             )}
 
             {gameState === 'PLAYING' && openingFlowStage === 'INTRODUCTION' && (
-              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px' }}>
-                <div className="fade-in" style={{ background: 'var(--sidebar-bg)', padding: '2rem', borderRadius: '8px', border: '1px solid var(--border-color)', width: '90%', maxWidth: '680px', display: 'flex', flexDirection: 'column', gap: '1rem', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', backdropFilter: 'blur(10px)', maxHeight: '90vh' }}>
-                  <div style={{ textAlign: 'center' }}>
-                    <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '2px' }}>INTRODUCTION</h3>
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1100, display: 'flex', alignItems: isMobileLayout ? 'stretch' : 'center', justifyContent: 'center', padding: isMobileLayout ? '0' : '24px 16px' }}>
+                <div className="fade-in" style={{ background: 'var(--sidebar-bg)', padding: isMobileLayout ? '1rem 0.9rem calc(1rem + env(safe-area-inset-bottom, 0px))' : '2rem', borderRadius: isMobileLayout ? '0' : '8px', border: '1px solid var(--border-color)', width: isMobileLayout ? '100vw' : '90%', maxWidth: isMobileLayout ? 'none' : '680px', display: 'flex', flexDirection: 'column', gap: isMobileLayout ? '0.85rem' : '1rem', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', backdropFilter: 'blur(10px)', maxHeight: isMobileLayout ? '100dvh' : '90vh', height: isMobileLayout ? '100dvh' : undefined }}>
+                  <div style={{ position: 'relative', textAlign: 'center', paddingTop: isMobileLayout ? 'max(0.35rem, env(safe-area-inset-top, 0px))' : 0 }}>
+                    <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '2px', textAlign: 'center' }}>INTRODUCTION</h3>
+                    <button onClick={closeIntroduction} style={{ ...CLOSE_BUTTON_STYLE, position: 'absolute', top: isMobileLayout ? 'max(0.2rem, env(safe-area-inset-top, 0px))' : 0, right: 0 }}>閉じる</button>
                   </div>
-                  <div className="markdown-body" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '1.5rem', color: 'var(--text-main)', minHeight: '220px' }}>
+                  <div className="markdown-body" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: isMobileLayout ? '1rem 0.9rem' : '1.5rem', color: 'var(--text-main)', minHeight: isMobileLayout ? 0 : '220px', lineHeight: isMobileLayout ? 1.8 : undefined }}>
                     {briefingText ? (
                       <ReactMarkdown>{formatNovelText(briefingText, false)}</ReactMarkdown>
                     ) : (
@@ -4921,7 +4926,7 @@ ${currentMapJson}
                     <button
                       className={styles.btn}
                       onClick={startPhase2}
-                      style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer' }}
+                      style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: isMobileLayout ? '0.85rem 1.25rem' : '0.6rem 1.5rem', borderRadius: '4px', cursor: 'pointer', width: isMobileLayout ? '100%' : undefined, maxWidth: isMobileLayout ? '420px' : undefined }}
                     >
                       物語に入る
                     </button>
