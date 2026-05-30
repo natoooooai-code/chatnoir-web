@@ -315,7 +315,7 @@ type GameState = 'WELCOME' | 'SAVES' | 'LOGIN' | 'BRIEFING' | 'PLAYING';
 type OpeningFlowStage = 'NONE' | 'PROLOGUE' | 'INTRODUCTION' | 'MAIN';
 type EndingPhase = 'NONE' | 'READY_TO_END' | 'FADE_OUT' | 'MENU' | 'REVIEW';
 type ThemeMode = 'light' | 'dark';
-type FontFamily = 'serif' | 'sans' | 'klee';
+type FontFamily = 'serif' | 'sans';
 type MapUpdateMode = 'merge' | 'replace';
 
 interface MessagePart {
@@ -495,7 +495,12 @@ const isEndingPhase = (value: unknown): value is EndingPhase => value === 'NONE'
 
 const isThemeMode = (value: unknown): value is ThemeMode => value === 'light' || value === 'dark';
 
-const isFontFamily = (value: unknown): value is FontFamily => value === 'serif' || value === 'sans' || value === 'klee';
+const isFontFamily = (value: unknown): value is FontFamily => value === 'serif' || value === 'sans';
+
+const normalizeFontFamily = (value: unknown): FontFamily | undefined => {
+  if (value === 'klee') return 'serif';
+  return isFontFamily(value) ? value : undefined;
+};
 
 const isMapUpdateMode = (value: unknown): value is MapUpdateMode => value === 'merge' || value === 'replace';
 
@@ -727,7 +732,7 @@ const normalizeStoredGameState = (value: unknown): StoredGameState => {
     theme: isThemeMode(record.theme) ? record.theme : undefined,
     scenarioTitle: getString(record.scenarioTitle),
     scenarioMeta: normalizeScenarioMetaData(record.scenarioMeta),
-    fontFamily: isFontFamily(record.fontFamily) ? record.fontFamily : undefined,
+    fontFamily: normalizeFontFamily(record.fontFamily),
     fontSize: getNumber(record.fontSize),
     isVertical: typeof record.isVertical === 'boolean' ? record.isVertical : undefined,
     sidebarWidth: getNumber(record.sidebarWidth),
@@ -2479,7 +2484,6 @@ export default function ChatNoir() {
       <select name="fontFamily" value={fontFamily} onChange={e => setFontFamily(e.target.value as FontFamily)} style={{ background: 'var(--panel-solid-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px' }}>
         <option value="serif">明朝体 (Serif)</option>
         <option value="sans">ゴシック体 (Sans)</option>
-        <option value="klee">手書き風 (Klee One)</option>
       </select>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
         <label htmlFor="font-size" style={{ fontSize: '0.8rem', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between' }}>
@@ -4154,7 +4158,7 @@ ${currentMapJson}
         --border-color: ${theme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'};
         --sidebar-bg: ${theme === 'dark' ? 'rgba(25, 25, 25, 0.85)' : 'rgba(250, 250, 250, 0.85)'};
         --chat-input-bg: ${theme === 'dark' ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)'};
-        --app-font: ${fontFamily === 'serif' ? 'var(--font-serif)' : fontFamily === 'sans' ? 'var(--font-sans)' : 'var(--font-klee)'};
+        --app-font: ${fontFamily === 'sans' ? 'var(--font-sans)' : 'var(--font-serif)'};
         --app-font-size: ${fontSize}px;
         --ui-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       }
@@ -4495,7 +4499,7 @@ ${currentMapJson}
           --panel-solid-bg: ${theme === 'dark' ? '#181818' : '#f7f7f7'};
           --chat-input-bg: ${theme === 'dark' ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)'};
           --input-area-bg: ${theme === 'dark' ? '#121212' : '#fafafa'};
-          --app-font: ${fontFamily === 'serif' ? 'var(--font-serif)' : fontFamily === 'sans' ? 'var(--font-sans)' : 'var(--font-klee)'};
+          --app-font: ${fontFamily === 'sans' ? 'var(--font-sans)' : 'var(--font-serif)'};
           --app-font-size: ${fontSize}px;
           --ui-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         }
@@ -4617,16 +4621,16 @@ ${currentMapJson}
           : undefined}
       >
         {gameState === 'PLAYING' && openingFlowStage === 'PROLOGUE' ? renderSettingsTrigger(
-          { display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--text-muted)', padding: '4px', fontSize: '1.2rem', cursor: 'pointer', transition: '0.3s', flexShrink: 0, touchAction: 'manipulation' },
+          { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', background: '#ffffff', border: '1px solid rgba(17, 17, 17, 0.08)', borderRadius: '10px', color: '#111111', padding: 0, fontSize: '1.2rem', cursor: 'pointer', transition: '0.3s', flexShrink: 0, touchAction: 'manipulation', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)' },
           {
             wrapperStyle: {
               position: 'absolute',
-              top: isMobileLayout ? '0.85rem' : '1rem',
+              bottom: isMobileLayout ? '0.85rem' : '1rem',
               right: isMobileLayout ? '0.85rem' : '1rem',
               zIndex: 120,
             },
             desktopAlign: 'right',
-            desktopDirection: 'below',
+            desktopDirection: 'above',
             contentMode: 'prologue',
           }
         ) : null}
