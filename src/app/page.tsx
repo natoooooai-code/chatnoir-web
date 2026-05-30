@@ -2453,7 +2453,7 @@ export default function ChatNoir() {
     setOpeningFlowStage('PROLOGUE');
   };
 
-  const renderSettingsContent = () => (
+  const renderSettingsContent = (mode: 'default' | 'prologue' = 'default') => (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
         <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-main)', letterSpacing: '0.08em' }}>設定</p>
@@ -2512,10 +2512,12 @@ export default function ChatNoir() {
           }} />
         </div>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-        <button onClick={handleSaveData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ書き出し</button>
-        <button onClick={handleLoadData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ読み込み</button>
-      </div>
+      {mode === 'default' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
+          <button onClick={handleSaveData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ書き出し</button>
+          <button onClick={handleLoadData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ読み込み</button>
+        </div>
+      ) : null}
       <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
         <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>AIモデル</p>
         <select name="runtimeModel" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--panel-solid-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
@@ -2537,10 +2539,10 @@ export default function ChatNoir() {
           </div>
         </div>
       </div>
-      {endingPhase === 'NONE' && !hasEndingMarker && (
+      {mode === 'default' && endingPhase === 'NONE' && !hasEndingMarker && (
         <button onClick={() => { void forceCloseCurtain(); }} disabled={isLoading || isCurtainCloseLocked} title={isCurtainCloseLocked ? 'プロローグ確認後に使用できます' : undefined} style={{ background: 'rgba(120, 22, 22, 0.14)', color: 'var(--accent-red)', border: '1px solid var(--accent-red)', padding: '8px', borderRadius: '4px', cursor: isLoading || isCurtainCloseLocked ? 'not-allowed' : 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center', opacity: isLoading || isCurtainCloseLocked ? 0.5 : 1 }}>幕を閉じる</button>
       )}
-      {isMobileLayout ? (
+      {mode === 'default' && isMobileLayout ? (
         <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <button onClick={() => { setShowSettings(false); setIsGmModalOpen(true); }} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>GMに質問</button>
         </div>
@@ -2557,7 +2559,12 @@ export default function ChatNoir() {
 
   const renderSettingsTrigger = (
     buttonStyle: React.CSSProperties,
-    options?: { wrapperStyle?: React.CSSProperties; desktopAlign?: 'left' | 'right' }
+    options?: {
+      wrapperStyle?: React.CSSProperties;
+      desktopAlign?: 'left' | 'right';
+      desktopDirection?: 'above' | 'below';
+      contentMode?: 'default' | 'prologue';
+    }
   ) => (
     <div style={options?.wrapperStyle ?? { position: 'relative' }}>
       <button
@@ -2571,12 +2578,12 @@ export default function ChatNoir() {
         isMobileLayout ? (
           <div onClick={() => setShowSettings(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.52)', zIndex: 240, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '16px 12px calc(16px + env(safe-area-inset-bottom, 0px))' }}>
             <div onClick={(event) => event.stopPropagation()} style={{ width: '100%', maxWidth: '560px', background: 'var(--panel-solid-bg)', border: `1px solid var(--border-color)`, borderRadius: '20px 20px 0 0', padding: '1rem 1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: 'min(72vh, 680px)', overflowY: 'auto', boxShadow: '0 -18px 48px rgba(15, 23, 42, 0.18)' }}>
-              {renderSettingsContent()}
+              {renderSettingsContent(options?.contentMode)}
             </div>
           </div>
         ) : (
-          <div style={{ position: 'absolute', bottom: '100%', ...(options?.desktopAlign === 'right' ? { right: 0 } : { left: 0 }), marginBottom: '8px', background: 'var(--panel-solid-bg)', border: `1px solid var(--border-color)`, padding: '1rem', borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '0.8rem', zIndex: 200, minWidth: '220px', maxWidth: '320px', maxHeight: 'min(70vh, 560px)', overflowY: 'auto', boxShadow: '0 -4px 10px rgba(0,0,0,0.1)' }}>
-            {renderSettingsContent()}
+          <div style={{ position: 'absolute', ...(options?.desktopDirection === 'below' ? { top: '100%', marginTop: '8px' } : { bottom: '100%', marginBottom: '8px' }), ...(options?.desktopAlign === 'right' ? { right: 0 } : { left: 0 }), background: 'var(--panel-solid-bg)', border: `1px solid var(--border-color)`, padding: '1rem', borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '0.8rem', zIndex: 200, minWidth: '220px', maxWidth: '320px', maxHeight: 'min(70vh, 560px)', overflowY: 'auto', boxShadow: '0 -4px 10px rgba(0,0,0,0.1)' }}>
+            {renderSettingsContent(options?.contentMode)}
           </div>
         )
       ) : null}
@@ -4619,6 +4626,8 @@ ${currentMapJson}
               zIndex: 120,
             },
             desktopAlign: 'right',
+            desktopDirection: 'below',
+            contentMode: 'prologue',
           }
         ) : null}
 
