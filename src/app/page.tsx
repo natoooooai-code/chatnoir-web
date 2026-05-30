@@ -2453,6 +2453,136 @@ export default function ChatNoir() {
     setOpeningFlowStage('PROLOGUE');
   };
 
+  const renderSettingsContent = () => (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+        <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-main)', letterSpacing: '0.08em' }}>設定</p>
+        {isMobileLayout ? (
+          <button onClick={() => setShowSettings(false)} style={CLOSE_BUTTON_STYLE}>閉じる</button>
+        ) : null}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '4px 0' }}>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-main)' }}>ダークモード</span>
+        <div
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          style={{
+            width: '40px', height: '20px', background: theme === 'dark' ? '#555' : '#ccc',
+            borderRadius: '20px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s'
+          }}
+        >
+          <div style={{
+            position: 'absolute', top: '2px', left: theme === 'dark' ? '22px' : '2px',
+            width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s', boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+          }} />
+        </div>
+      </div>
+      <select name="fontFamily" value={fontFamily} onChange={e => setFontFamily(e.target.value as FontFamily)} style={{ background: 'var(--panel-solid-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px' }}>
+        <option value="serif">明朝体 (Serif)</option>
+        <option value="sans">ゴシック体 (Sans)</option>
+        <option value="klee">手書き風 (Klee One)</option>
+      </select>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <label htmlFor="font-size" style={{ fontSize: '0.8rem', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between' }}>
+          文字サイズ: <span>{fontSize}px</span>
+        </label>
+        <input
+          id="font-size"
+          type="range"
+          name="fontSize"
+          min="12"
+          max="28"
+          step="1"
+          value={fontSize}
+          onChange={e => setFontSize(Number(e.target.value))}
+          style={{ cursor: 'pointer' }}
+        />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '4px 0' }}>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-main)' }}>縦書きモード</span>
+        <div
+          onClick={() => setIsVertical(!isVertical)}
+          style={{
+            width: '40px', height: '20px', background: isVertical ? '#555' : '#ccc',
+            borderRadius: '20px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s'
+          }}
+        >
+          <div style={{
+            position: 'absolute', top: '2px', left: isVertical ? '22px' : '2px',
+            width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s', boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+          }} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
+        <button onClick={handleSaveData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ書き出し</button>
+        <button onClick={handleLoadData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ読み込み</button>
+      </div>
+      <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>AIモデル</p>
+        <select name="runtimeModel" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--panel-solid-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
+          {RUNTIME_MODEL_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.compactLabel}</option>
+          ))}
+        </select>
+        <p style={{ margin: 0, fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          制限は{' '}
+          <a href={GOOGLE_AI_STUDIO_RATE_LIMITS_URL} target="_blank" rel="noreferrer" style={{ color: '#9fb6ff', textDecoration: 'underline', textUnderlineOffset: '3px' }}>
+            Gemini API のレート制限
+          </a>
+          を参照。
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-main)' }}>フォールバック</span>
+          <div onClick={() => setFallbackEnabled(!fallbackEnabled)} style={{ width: '36px', height: '18px', background: fallbackEnabled ? '#4a7c59' : 'var(--border-color)', borderRadius: '18px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s' }}>
+            <div style={{ position: 'absolute', top: '1px', left: fallbackEnabled ? '19px' : '1px', width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s' }} />
+          </div>
+        </div>
+      </div>
+      {endingPhase === 'NONE' && !hasEndingMarker && (
+        <button onClick={() => { void forceCloseCurtain(); }} disabled={isLoading || isCurtainCloseLocked} title={isCurtainCloseLocked ? 'プロローグ確認後に使用できます' : undefined} style={{ background: 'rgba(120, 22, 22, 0.14)', color: 'var(--accent-red)', border: '1px solid var(--accent-red)', padding: '8px', borderRadius: '4px', cursor: isLoading || isCurtainCloseLocked ? 'not-allowed' : 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center', opacity: isLoading || isCurtainCloseLocked ? 0.5 : 1 }}>幕を閉じる</button>
+      )}
+      {isMobileLayout ? (
+        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <button onClick={() => { setShowSettings(false); setIsGmModalOpen(true); }} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>GMに質問</button>
+        </div>
+      ) : null}
+      <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>待機室へ</button>
+      <button onClick={async () => {
+        if (await showAppConfirm("トップ画面へ戻りますか？（現在の進行状況は自動セーブされています）", { title: 'トップ画面へ戻る' })) {
+          setGameState('WELCOME');
+          setShowSettings(false);
+        }
+      }} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>トップ画面へ戻る</button>
+    </>
+  );
+
+  const renderSettingsTrigger = (
+    buttonStyle: React.CSSProperties,
+    options?: { wrapperStyle?: React.CSSProperties; desktopAlign?: 'left' | 'right' }
+  ) => (
+    <div style={options?.wrapperStyle ?? { position: 'relative' }}>
+      <button
+        onClick={() => setShowSettings(!showSettings)}
+        style={buttonStyle}
+        title="画面設定"
+      >
+        ⚙
+      </button>
+      {showSettings ? (
+        isMobileLayout ? (
+          <div onClick={() => setShowSettings(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.52)', zIndex: 240, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '16px 12px calc(16px + env(safe-area-inset-bottom, 0px))' }}>
+            <div onClick={(event) => event.stopPropagation()} style={{ width: '100%', maxWidth: '560px', background: 'var(--panel-solid-bg)', border: `1px solid var(--border-color)`, borderRadius: '20px 20px 0 0', padding: '1rem 1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: 'min(72vh, 680px)', overflowY: 'auto', boxShadow: '0 -18px 48px rgba(15, 23, 42, 0.18)' }}>
+              {renderSettingsContent()}
+            </div>
+          </div>
+        ) : (
+          <div style={{ position: 'absolute', bottom: '100%', ...(options?.desktopAlign === 'right' ? { right: 0 } : { left: 0 }), marginBottom: '8px', background: 'var(--panel-solid-bg)', border: `1px solid var(--border-color)`, padding: '1rem', borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '0.8rem', zIndex: 200, minWidth: '220px', maxWidth: '320px', maxHeight: 'min(70vh, 560px)', overflowY: 'auto', boxShadow: '0 -4px 10px rgba(0,0,0,0.1)' }}>
+            {renderSettingsContent()}
+          </div>
+        )
+      ) : null}
+    </div>
+  );
+
   // プレイヤーがプロローグを読み終え、「物語に入る」を押した時の処理
   const startPhase2 = async () => {
     setOpeningFlowStage('MAIN');
@@ -4479,6 +4609,19 @@ ${currentMapJson}
             }
           : undefined}
       >
+        {gameState === 'PLAYING' && openingFlowStage === 'PROLOGUE' ? renderSettingsTrigger(
+          { display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--text-muted)', padding: '4px', fontSize: '1.2rem', cursor: 'pointer', transition: '0.3s', flexShrink: 0, touchAction: 'manipulation' },
+          {
+            wrapperStyle: {
+              position: 'absolute',
+              top: isMobileLayout ? '0.85rem' : '1rem',
+              right: isMobileLayout ? '0.85rem' : '1rem',
+              zIndex: 120,
+            },
+            desktopAlign: 'right',
+          }
+        ) : null}
+
         <div
           className={styles.chatHistory}
           ref={scrollRef}
@@ -4694,134 +4837,7 @@ ${currentMapJson}
           {/* 入力補助・特殊コマンドボタン */}
           <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center', flexDirection: 'row', gap: '8px' }}>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', overflowX: 'visible', width: '100%' }}>
-              <div style={{ position: 'relative' }}>
-                <button
-                  onClick={() => setShowSettings(!showSettings)}
-                  style={{ display: 'flex', alignItems: 'center', background: 'transparent', border: 'none', color: 'var(--text-muted)', padding: '4px', fontSize: '1.2rem', cursor: 'pointer', transition: '0.3s', flexShrink: 0, touchAction: 'manipulation' }}
-                  title="画面設定"
-                >
-                  ⚙
-                </button>
-                {showSettings && (() => {
-                  const settingsContent = (
-                    <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                      <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-main)', letterSpacing: '0.08em' }}>設定</p>
-                      {isMobileLayout ? (
-                        <button onClick={() => setShowSettings(false)} style={CLOSE_BUTTON_STYLE}>閉じる</button>
-                      ) : null}
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '4px 0' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-main)' }}>ダークモード</span>
-                      <div
-                        onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                        style={{
-                          width: '40px', height: '20px', background: theme === 'dark' ? '#555' : '#ccc',
-                          borderRadius: '20px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s'
-                        }}
-                      >
-                        <div style={{
-                          position: 'absolute', top: '2px', left: theme === 'dark' ? '22px' : '2px',
-                          width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s', boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                        }} />
-                      </div>
-                    </div>
-                    <select name="fontFamily" value={fontFamily} onChange={e => setFontFamily(e.target.value as FontFamily)} style={{ background: 'var(--panel-solid-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px' }}>
-                      <option value="serif">明朝体 (Serif)</option>
-                      <option value="sans">ゴシック体 (Sans)</option>
-                      <option value="klee">手書き風 (Klee One)</option>
-                    </select>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label htmlFor="font-size" style={{ fontSize: '0.8rem', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between' }}>
-                        文字サイズ: <span>{fontSize}px</span>
-                      </label>
-                      <input
-                        id="font-size"
-                        type="range"
-                        name="fontSize"
-                        min="12"
-                        max="28"
-                        step="1"
-                        value={fontSize}
-                        onChange={e => setFontSize(Number(e.target.value))}
-                        style={{ cursor: 'pointer' }}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '4px 0' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-main)' }}>縦書きモード</span>
-                      <div
-                        onClick={() => setIsVertical(!isVertical)}
-                        style={{
-                          width: '40px', height: '20px', background: isVertical ? '#555' : '#ccc',
-                          borderRadius: '20px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s'
-                        }}
-                      >
-                        <div style={{
-                          position: 'absolute', top: '2px', left: isVertical ? '22px' : '2px',
-                          width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s', boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                        }} />
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                      <button onClick={handleSaveData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ書き出し</button>
-                      <button onClick={handleLoadData} style={{ background: 'var(--bg-color)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>データ読み込み</button>
-                    </div>
-                    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>AIモデル</p>
-                      <select name="runtimeModel" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ background: 'var(--panel-solid-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '4px', borderRadius: '4px', fontSize: '0.75rem' }}>
-                        {RUNTIME_MODEL_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>{option.compactLabel}</option>
-                        ))}
-                      </select>
-                      <p style={{ margin: 0, fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                        制限は{' '}
-                        <a href={GOOGLE_AI_STUDIO_RATE_LIMITS_URL} target="_blank" rel="noreferrer" style={{ color: '#9fb6ff', textDecoration: 'underline', textUnderlineOffset: '3px' }}>
-                          Gemini API のレート制限
-                        </a>
-                        を参照。
-                      </p>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-main)' }}>フォールバック</span>
-                        <div onClick={() => setFallbackEnabled(!fallbackEnabled)} style={{ width: '36px', height: '18px', background: fallbackEnabled ? '#4a7c59' : 'var(--border-color)', borderRadius: '18px', position: 'relative', cursor: 'pointer', transition: 'background 0.3s' }}>
-                          <div style={{ position: 'absolute', top: '1px', left: fallbackEnabled ? '19px' : '1px', width: '16px', height: '16px', background: '#fff', borderRadius: '50%', transition: 'left 0.3s' }} />
-                        </div>
-                      </div>
-                    </div>
-                    {endingPhase === 'NONE' && !hasEndingMarker && (
-                      <button onClick={() => { void forceCloseCurtain(); }} disabled={isLoading || isCurtainCloseLocked} title={isCurtainCloseLocked ? 'プロローグ確認後に使用できます' : undefined} style={{ background: 'rgba(120, 22, 22, 0.14)', color: 'var(--accent-red)', border: '1px solid var(--accent-red)', padding: '8px', borderRadius: '4px', cursor: isLoading || isCurtainCloseLocked ? 'not-allowed' : 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center', opacity: isLoading || isCurtainCloseLocked ? 0.5 : 1 }}>幕を閉じる</button>
-                    )}
-                    {isMobileLayout ? (
-                      <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <button onClick={() => { setShowSettings(false); setIsGmModalOpen(true); }} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', textAlign: 'center' }}>GMに質問</button>
-                      </div>
-                    ) : null}
-                    <button onClick={() => { setGameState('SAVES'); setShowSettings(false); }} style={{ background: 'var(--text-main)', color: 'var(--bg-color)', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>待機室へ</button>
-                    <button onClick={async () => {
-                      if (await showAppConfirm("トップ画面へ戻りますか？（現在の進行状況は自動セーブされています）", { title: 'トップ画面へ戻る' })) {
-                        setGameState('WELCOME'); 
-                        setShowSettings(false);
-                      }
-                    }} style={{ background: 'transparent', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', marginTop: '4px', textAlign: 'center' }}>トップ画面へ戻る</button>
-                    </>
-                  );
-
-                  if (isMobileLayout) {
-                    return (
-                      <div onClick={() => setShowSettings(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.52)', zIndex: 240, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '16px 12px calc(16px + env(safe-area-inset-bottom, 0px))' }}>
-                        <div onClick={(event) => event.stopPropagation()} style={{ width: '100%', maxWidth: '560px', background: 'var(--panel-solid-bg)', border: `1px solid var(--border-color)`, borderRadius: '20px 20px 0 0', padding: '1rem 1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: 'min(72vh, 680px)', overflowY: 'auto', boxShadow: '0 -18px 48px rgba(15, 23, 42, 0.18)' }}>
-                          {settingsContent}
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div style={{ position: 'absolute', bottom: '100%', left: '0', marginBottom: '8px', background: 'var(--panel-solid-bg)', border: `1px solid var(--border-color)`, padding: '1rem', borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '0.8rem', zIndex: 200, minWidth: '220px', maxWidth: '320px', maxHeight: 'min(70vh, 560px)', overflowY: 'auto', boxShadow: '0 -4px 10px rgba(0,0,0,0.1)' }}>
-                      {settingsContent}
-                    </div>
-                  );
-                })()}
-              </div>
+              {renderSettingsTrigger({ display: 'flex', alignItems: 'center', background: 'transparent', border: 'none', color: 'var(--text-muted)', padding: '4px', fontSize: '1.2rem', cursor: 'pointer', transition: '0.3s', flexShrink: 0, touchAction: 'manipulation' })}
 
               <button onClick={() => insertTags('「', '」')} style={isMobileLayout ? { minHeight: '34px', fontSize: '0.74rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0 10px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, touchAction: 'manipulation' } : { fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, touchAction: 'manipulation' }}>「」セリフ</button>
               {!isMobileLayout ? <button onClick={openSupportModal} style={{ fontSize: '0.75rem', color: 'var(--text-main)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '2px', padding: '2px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', flexShrink: 0, touchAction: 'manipulation' }}>
