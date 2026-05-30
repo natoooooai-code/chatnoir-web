@@ -1681,6 +1681,7 @@ export default function ChatNoir() {
     setPrologueText('');
     setMapFileText('');
     setCoverImage('');
+    setScenarioTitle('');
     setSaveName('');
     setSessionRunId('');
     setPlayerMemo('');
@@ -2904,6 +2905,10 @@ ${currentMapJson}
 
   const applySupportSuggestion = (suggestion: string) => {
     chatInputRef.current?.setValue(suggestion);
+    if (isMobileLayout) {
+      closeSupportPanels();
+      setTimeout(() => chatInputRef.current?.focus(), 0);
+    }
     showToast('提案文を入力欄へ入れました');
   };
 
@@ -3994,6 +3999,12 @@ ${currentMapJson}
 
   // --- シナリオ準備画面 ---
   if (gameState === 'LOGIN') {
+    const hasSelectedScenario = Boolean(
+      scenarioTitle.trim()
+      || scenarioText.trim()
+      || briefingText.trim()
+      || prologueText.trim()
+    );
     const dynamicStyles = `
       :root {
         --bg-color: ${theme === 'dark' ? '#121212' : '#fafafa'};
@@ -4033,25 +4044,36 @@ ${currentMapJson}
               待機室へ戻る
             </button>
           </div>
-          <div style={{ width: '100%', marginBottom: '1rem', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {coverImage ? (
-              <img src={resolvePublicAssetPath(coverImage)} alt="Cover" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'cover', display: 'block' }} />
+          <div style={{ width: '100%', marginBottom: '1rem', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center', aspectRatio: '16 / 9' }}>
+            {!hasSelectedScenario ? (
+              <img src={resolvePublicAssetPath(APP_LOGO_PATH)} alt="Chat;Noir" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', padding: '2rem' }} />
+            ) : coverImage ? (
+              <img src={resolvePublicAssetPath(coverImage)} alt="Cover" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
             ) : (
-              <img src={resolvePublicAssetPath(APP_LOGO_PATH)} alt="Chat;Noir" style={{ width: '100%', height: 'auto', maxHeight: '450px', objectFit: 'contain', display: 'block', padding: '2rem' }} />
+              <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.9rem', color: '#555', padding: '1.5rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '1rem', letterSpacing: '4px', fontWeight: 700 }}>
+                  NO IMAGE
+                </div>
+                <div style={{ fontSize: '0.9rem', lineHeight: 1.6, letterSpacing: '1px', color: '#8a8a8a', maxWidth: '100%' }}>
+                  {scenarioTitle?.trim() || 'タイトル未設定'}
+                </div>
+              </div>
             )}
           </div>
-          <div style={{ marginBottom: '1.75rem', display: 'flex', justifyContent: 'flex-end' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                onClick={openWaitingRoomCoverPicker}
-                style={{ background: '#1f1f1f', color: '#f5f5f5', border: '1px solid #3a3a3a', padding: '0.72rem 1rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.78rem', letterSpacing: '0.6px', fontWeight: 700 }}
-              >
-                {coverImage ? 'カバー画像を差し替える' : 'カバー画像を設定する'}
-              </button>
-              <input ref={waitingRoomCoverInputRef} type="file" accept="image/*" onChange={handleWaitingRoomCoverChange} style={{ display: 'none' }} />
+          {hasSelectedScenario ? (
+            <div style={{ marginBottom: '1.75rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={openWaitingRoomCoverPicker}
+                  style={{ background: '#1f1f1f', color: '#f5f5f5', border: '1px solid #3a3a3a', padding: '0.72rem 1rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.78rem', letterSpacing: '0.6px', fontWeight: 700 }}
+                >
+                  {coverImage ? 'カバー画像を差し替える' : 'カバー画像を設定する'}
+                </button>
+                <input ref={waitingRoomCoverInputRef} type="file" accept="image/*" onChange={handleWaitingRoomCoverChange} style={{ display: 'none' }} />
+              </div>
             </div>
-          </div>
+          ) : null}
 
           {/* シナリオライブラリ（保存済みマスターデータ + サンプル） */}
           <div style={{ marginBottom: '2rem' }}>
@@ -4866,7 +4888,7 @@ ${currentMapJson}
                     disabled={isLoading}
                     sendTrigger="ctrl-enter"
                     style={{ width: '100%', minHeight: '80px', background: 'var(--chat-input-bg)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '4px', resize: 'vertical', fontSize: '0.9rem', fontFamily: 'inherit' }}
-                    placeholder={isMobileLayout ? '例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Enterで改行、送信は下のボタン)' : '例：今の部屋に窓はありますか？ / 一度セーブして中断したいです&#13;&#10;(Enterで改行、Ctrl+Enterで送信)'}
+                    placeholder={isMobileLayout ? '例：今の部屋に窓はありますか？(Enterで改行、送信は下のボタン)' : '例：今の部屋に窓はありますか？(Enterで改行、Ctrl+Enterで送信)'}
                   />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                     <button onClick={() => {
@@ -5160,7 +5182,7 @@ ${currentMapJson}
         </div>
 
         {/* スクロール可能なメインコンテンツ */}
-        <div style={{ flexGrow: 1, overflowY: 'auto', padding: '2rem 2rem 4rem 2.5rem', display: 'flex', flexDirection: 'column', gap: '4rem', scrollBehavior: 'smooth', position: 'relative' }}>
+        <div style={{ flexGrow: 1, minHeight: 0, position: 'relative' }}>
           {isAnySidebarUpdating && (
             <div style={{ 
               position: 'absolute', 
@@ -5192,6 +5214,8 @@ ${currentMapJson}
               </div>
             </div>
           )}
+
+          <div style={{ height: '100%', overflowY: 'auto', padding: '2rem 2rem 4rem 2.5rem', display: 'flex', flexDirection: 'column', gap: '4rem', scrollBehavior: 'smooth' }}>
 
           {/* プレイヤーメモ */}
           <div className={styles.sidebarSection}>
@@ -5469,6 +5493,7 @@ ${currentMapJson}
               </button>
             </div>
           )}
+          </div>
         </div>
       </aside>
     </div>
