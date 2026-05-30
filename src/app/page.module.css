@@ -404,19 +404,23 @@
 
   .gameLayout {
     flex-direction: column;
-    height: auto;
-    min-height: 100vh;
-    overflow: auto;
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
   }
 
   .mainChat {
-    padding-bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));
-    min-height: 100vh;
+    flex: 0 0 calc(100dvh - 8.75rem - env(safe-area-inset-bottom, 0px));
+    height: calc(100dvh - 8.75rem - env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - 8.75rem - env(safe-area-inset-bottom, 0px));
+    min-height: calc(100dvh - 8.75rem - env(safe-area-inset-bottom, 0px));
+    overflow: hidden;
   }
 
   .chatHistory {
     padding: 1.5rem 1rem 1rem;
-    padding-bottom: 1.5rem;
+    padding-bottom: 2.5rem;
+    scroll-padding-bottom: 2.5rem;
     line-height: 1.95;
   }
 
@@ -489,7 +493,15 @@
 
   .chatHistory {
     padding: 1rem 0.75rem 0.75rem;
-    padding-bottom: 1rem;
+    padding-bottom: 2.25rem;
+    scroll-padding-bottom: 2.25rem;
+  }
+
+  .mainChat {
+    flex: 0 0 calc(100dvh - 8.25rem - env(safe-area-inset-bottom, 0px));
+    height: calc(100dvh - 8.25rem - env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - 8.25rem - env(safe-area-inset-bottom, 0px));
+    min-height: calc(100dvh - 8.25rem - env(safe-area-inset-bottom, 0px));
   }
 
   .messageRow {

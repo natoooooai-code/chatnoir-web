@@ -4331,7 +4331,7 @@ ${currentMapJson}
           --sidebar-bg: ${theme === 'dark' ? 'rgba(25, 25, 25, 0.85)' : 'rgba(250, 250, 250, 0.85)'};
           --panel-solid-bg: ${theme === 'dark' ? '#181818' : '#f7f7f7'};
           --chat-input-bg: ${theme === 'dark' ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)'};
-          --input-area-bg: ${theme === 'dark' ? 'linear-gradient(to top, #121212 0%, rgba(18, 18, 18, 0.98) 100%)' : 'linear-gradient(to top, #fafafa 0%, rgba(255, 255, 255, 0.96) 100%)'};
+          --input-area-bg: ${theme === 'dark' ? '#121212' : '#fafafa'};
           --app-font: ${fontFamily === 'serif' ? 'var(--font-serif)' : fontFamily === 'sans' ? 'var(--font-sans)' : 'var(--font-klee)'};
           --app-font-size: ${fontSize}px;
           --ui-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -5143,17 +5143,17 @@ ${currentMapJson}
         />
 
         {/* 固定ヘッダー */}
-        <div style={{ flexShrink: 0, background: isMobileLayout ? 'var(--panel-solid-bg)' : 'var(--sidebar-bg)', zIndex: 40, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', borderBottom: '1px solid var(--border-color)', padding: isMobileLayout ? '0.9rem 1rem' : '0.8rem 1.5rem' }}>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', minWidth: 0, overflowX: isMobileLayout ? 'auto' : 'visible', flex: 1 }}>
-            <button onClick={() => toggleAllSections(true)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px', whiteSpace: 'nowrap', flexShrink: 0 }}>一括展開</button>
-            <button onClick={() => toggleAllSections(false)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px', whiteSpace: 'nowrap', flexShrink: 0 }}>一括折りたたみ</button>
-            <button onClick={() => { setIsMapLegendExpanded(false); setIsMapModalOpen(true); }} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'var(--text-main)', border: 'none', borderRadius: '4px', cursor: 'pointer', color: 'var(--bg-color)', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', flexShrink: 0, justifyContent: 'center' }}>
+        <div style={{ flexShrink: 0, background: isMobileLayout ? 'var(--panel-solid-bg)' : 'var(--sidebar-bg)', zIndex: 40, display: 'flex', justifyContent: 'space-between', alignItems: isMobileLayout ? 'stretch' : 'flex-start', flexDirection: isMobileLayout ? 'column' : 'row', gap: '0.75rem', borderBottom: '1px solid var(--border-color)', padding: isMobileLayout ? '0.9rem 1rem' : '0.8rem 1.5rem' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', minWidth: 0, overflowX: isMobileLayout ? 'auto' : 'visible', flex: isMobileLayout ? undefined : 1, width: isMobileLayout ? '100%' : undefined, order: isMobileLayout ? 2 : undefined }}>
+            <button onClick={() => toggleAllSections(true)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px', whiteSpace: 'nowrap', flexShrink: 0, flex: isMobileLayout ? 1 : undefined }}>一括展開</button>
+            <button onClick={() => toggleAllSections(false)} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-main)', letterSpacing: '1px', whiteSpace: 'nowrap', flexShrink: 0, flex: isMobileLayout ? 1 : undefined }}>一括折りたたみ</button>
+            <button onClick={() => { setIsMapLegendExpanded(false); setIsMapModalOpen(true); }} style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'var(--text-main)', border: 'none', borderRadius: '4px', cursor: 'pointer', color: 'var(--bg-color)', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', flexShrink: 0, justifyContent: 'center', flex: isMobileLayout ? 1 : undefined }}>
               <IconMap size={12} /> {isMapUpdating ? '地図（更新中…）' : '地図'}
             </button>
           </div>
           <button
             onClick={() => setIsSidebarOpen(false)}
-            style={CLOSE_BUTTON_STYLE}
+            style={{ ...CLOSE_BUTTON_STYLE, alignSelf: isMobileLayout ? 'flex-end' : undefined, order: isMobileLayout ? 1 : undefined }}
           >
             閉じる
           </button>
